@@ -255,7 +255,7 @@ class DRS(object):
         # --------------------------------------------------------------
         # Check if the proper files are here
         # --------------------------------------------------------------
-        dir_fil = os.path.dirname(os.path.abspath(__file__))
+        dir_fil = os.path.dirname(os.path.abspath(__file__)) + '/filters'
         if not os.path.isfile(dir_fil + '/SPHERE_IRDIS_' + self.obs_filter + '.dat'):
             self._error_msg('The file SPHERE_IRDIS_' + self.obs_filter + '.dat seems to be missing in ' + dir_fil)
         if not os.path.isfile(dir_fil + '/SPHERE_CPI_ND.dat'):
