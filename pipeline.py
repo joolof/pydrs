@@ -19,7 +19,37 @@ from scipy.signal import medfilt as medfilt
 # -----------------------------------------------------------------------------
 class DRS(object):
     """
-    Class for the SPHERE data reduction
+    Class for the SPHERE data reduction. The module should be imported as follows:
+
+    > from pydrs import DRS
+
+    and can be called as
+
+    > data_red = DRS('Starname', 'path to data')
+
+    Everything should be automatic from there and the pipeline will ask
+    you some questions along the way.
+
+    MANDATORY INPUTS:
+        + name of the star: should match the name in the header of the science frames
+        + directory where the fits files are stored (no ".ftis.Z")
+
+    OPTIONAL INPUTS:
+        + dir_cosmetics: a string for the name of the directory that will contain the 
+                         dark, flat, starcenter products
+        + dir_science: a string for the name of the direcotry that will contain the
+                       reduced science frames
+        + dir_sof: a string for the name of the directory that will contain the files
+                   for the esorex recipes
+        + summary: a boolean to plot a quick (to be improved) summary of the observations
+        + width: a float for the width, in pixels, of a 2D gaussian to convolve the 
+                 science frames [ONLY for DPI observations]
+        + kernel_width: an integer for median filtering of all columns of the science 
+                        frames, to remove "hot" pixels that were not flagged in the bad
+                        pixel map [ONLY for DPI observations]
+
+
+
     """
     def __init__(self, starname, path_to_fits, dir_cosmetics = 'cosmetics', dir_science = 'science', dir_sof = 'sof', summary = False, width = 0., kernel_width = 9):
         # --------------------------------------------------------------        
@@ -31,7 +61,7 @@ class DRS(object):
         assert type(dir_science) is str, 'The name of the science directory should be a string'
         assert type(dir_sof) is str, 'The name of the sof directory should be a string'
         assert type(path_to_fits) is str, 'The name of the directory containing the fits file should be a string'
-        assert ((type(width) is int) or (type(width) is float)), 'The value of width should be a float or an integer'
+        assert type(width) is float, 'The value of width should be a float or an integer'
         assert type(kernel_width) is int, 'The width of the kernel for the readout smoothing should be an integer'
         if not os.path.isdir(path_to_fits):
             self._error_msg('The directory containing the fits files cannot be found.')
@@ -689,8 +719,9 @@ class DRS(object):
         for i in range(ndit):
             med_col = np.median(frame[i,sel_readout,:],axis=0)
             for j in range(self._nx):
-                cleaned[i,:,j] = frame[i,:,j] - med_col[j] 
-                cleaned[i,:,j] = medfilt(cleaned[i,:,j], self._km)
+                cleaned[i,:,j] = frame[i,:,j] - med_col[j]
+                if self._km > 0:
+                    cleaned[i,:,j] = medfilt(cleaned[i,:,j], self._km)
         return np.median(cleaned, axis = 0)
 
     # --------------------------------------------------------------
