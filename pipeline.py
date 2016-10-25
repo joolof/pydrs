@@ -2,6 +2,7 @@ import sys
 import vip
 import glob
 import pyds9
+import scipy
 import os.path
 import datetime
 import subprocess
@@ -150,8 +151,7 @@ class DRS(object):
         # Merge the frames if necessary
         # --------------------------------------------------------------
         if ((self.obs_mode == 'IMAGE,DUAL') | (self.obs_mode == 'IMAGE,CLASSICAL')):
-            if self._corono:
-                self._merge()
+            self._merge()
         if self.obs_mode == 'POLARIMETRY':
             self._reduce_dpi()
 
@@ -1343,6 +1343,40 @@ class DRS(object):
         return final_filter
 
     # --------------------------------------------------------------        
+    # Method to shift individual frame
+    # --------------------------------------------------------------        
+    def _shift_array(self, frame):
+        """
+        Method to find the bright spot and shift it to the center
+        """
+        thrs = 5.
+        sources = daofind(frame, fwhm = 4.0, threshold = thrs * np.std(frame))
+        bright = np.argsort(sources['peak'])[-1:]
+        new_frame = scipy.ndimage.interpolation.shift(frame, [512-sources['ycentroid'][bright[0]],512-sources['xcentroid'][bright[0]]])
+        return new_frame        
+
+    # --------------------------------------------------------------        
+    # Method to do "manual" recentering
+    # --------------------------------------------------------------        
+    def _recenter_dao(self, cube):
+        """
+        Use daofind to locate the source and recenter it (only use for non coronagraphic observations)
+        """
+        if len(np.shape(cube)) == 3:
+            nf = np.shape(cube)[0]
+            for i in range(nf):
+                if i == 0:
+                    frame = self._shift_array(cube[i,])
+                else:
+                    frame += self._shift_array(cube[i,])
+            frame = frame / np.float(nf)
+        else:
+            frame = self._shift_array(cube)
+        return frame
+
+
+
+    # --------------------------------------------------------------        
     # Method to read the science fits files
     # --------------------------------------------------------------        
     def _read_fits(self, filename, peak_left, peak_right):
@@ -1352,14 +1386,20 @@ class DRS(object):
         # --------------------------------------------------------------        
         hdu = fits.open(filename + '_right.fits')
         p_r = 0.5 * (hdu[0].header['HIERARCH ESO TEL PARANG END'] + hdu[0].header['HIERARCH ESO TEL PARANG START'])
-        data_right = np.mean(hdu[0].data, axis = 0) / peak_right
+        if self._corono:
+            data_right = np.mean(hdu[0].data, axis = 0) / peak_right
+        else:
+            data_right = self._recenter_dao(hdu[0].data)/ peak_right
         hdu.close()
         # --------------------------------------------------------------        
         # Read the left image
         # --------------------------------------------------------------        
         hdu = fits.open(filename + '_left.fits')
         p_l = 0.5 * (hdu[0].header['HIERARCH ESO TEL PARANG END'] + hdu[0].header['HIERARCH ESO TEL PARANG START'])
-        data_left = np.mean(hdu[0].data, axis = 0) / peak_left
+        if self._corono:
+            data_left = np.mean(hdu[0].data, axis = 0) / peak_left
+        else:
+            data_left = self._recenter_dao(hdu[0].data)/ peak_left
         hdu.close()
         # --------------------------------------------------------------        
         # The total image is the mean of left and right
