@@ -250,14 +250,11 @@ class DRS(object):
     # --------------------------------------------------------------
     def _read_filters(self, nd):
         """
-        Method to read the filters files and such
+        Method to read the filters files and such.
+        If there are no ND filter (nd == 'OPEN'), there is no scaling other than the 
+        possible DIT differences.
         """
         f_left, f_right = 1.0, 1.0
-        # --------------------------------------------------------------
-        # Possible exception
-        # --------------------------------------------------------------
-        if nd =='OPEN':
-            self._error_msg('No ND for the flux measurements. I have to think about it.')
         # --------------------------------------------------------------
         # Check if the proper files are here
         # --------------------------------------------------------------
