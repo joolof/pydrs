@@ -47,16 +47,19 @@ class DRS(object):
         + kernel_width: an integer for median filtering of all columns of the science 
                         frames, to remove "hot" pixels that were not flagged in the bad
                         pixel map [ONLY for DPI observations]
-
+        + corono: a boolean to ignore the centering frames (will not apply the
+                  star_centering in the cosmetics for the science frames). Default
+                  is True (i.e., a coronagraph was used).
 
 
     """
-    def __init__(self, starname, path_to_fits, dir_cosmetics = 'cosmetics', dir_science = 'science', dir_sof = 'sof', summary = False, width = 0., kernel_width = 9):
+    def __init__(self, starname, path_to_fits, dir_cosmetics = 'cosmetics', dir_science = 'science', dir_sof = 'sof', summary = False, width = 0., kernel_width = 9, corono = True):
         # --------------------------------------------------------------        
         # Check the inputs
         # --------------------------------------------------------------        
         assert type(starname) is str, 'The name of the star should be a string'
         assert type(summary) is bool, 'The variable \'summary\' should be True or False'
+        assert type(corono) is bool, 'The variable \'corono\' should be True or False'
         assert type(dir_cosmetics) is str, 'The name of the cosmetics directory should be a string'
         assert type(dir_science) is str, 'The name of the science directory should be a string'
         assert type(dir_sof) is str, 'The name of the sof directory should be a string'
@@ -79,6 +82,7 @@ class DRS(object):
         self._is_center = False
         self._is_flux = False
         self._is_science = False
+        self._corono = corono
         # --------------------------------------------------------------
         # Check for existing directories, if not there try to create them
         # --------------------------------------------------------------
@@ -138,14 +142,16 @@ class DRS(object):
         # --------------------------------------------------------------
         if not self._is_dark: self._master_dark()
         if not self._is_flat: self._flat()
-        if not self._is_center: self._center()
+        if self._corono:
+            if not self._is_center: self._center()
         if not self._is_flux: self._flux()
         if not self._is_science: self._science()
         # --------------------------------------------------------------
         # Merge the frames if necessary
         # --------------------------------------------------------------
         if ((self.obs_mode == 'IMAGE,DUAL') | (self.obs_mode == 'IMAGE,CLASSICAL')):
-            self._merge()
+            if self._corono:
+                self._merge()
         if self.obs_mode == 'POLARIMETRY':
             self._reduce_dpi()
 
@@ -629,7 +635,8 @@ class DRS(object):
         # f.write(self._dir_cosm + '/instr_flat_badpixels.fits\tIRD_STATIC_BADPIXELMAP\n')
         f.write(self._dir_cosm + '/static_badpixels.fits\tIRD_STATIC_BADPIXELMAP\n')
         f.write(self._dir_cosm + '/irdis_flat.fits\tIRD_FLAT_FIELD\n')
-        f.write(self._dir_cosm + '/starcenter.fits\tIRD_STAR_CENTER\n')
+        if self._corono:
+            f.write(self._dir_cosm + '/starcenter.fits\tIRD_STAR_CENTER\n')
         f.close()
         # --------------------------------------------------------------        
         # Either run the DBI esorex method or the polarimetric one
