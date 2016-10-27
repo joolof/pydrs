@@ -1,6 +1,5 @@
 import sys
 import glob
-import pyds9
 import scipy
 import os.path
 import datetime
