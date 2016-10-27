@@ -1,5 +1,4 @@
 import sys
-import vip
 import glob
 import pyds9
 import scipy
@@ -17,6 +16,12 @@ from photutils import CircularAperture, CircularAnnulus, aperture_photometry
 from photutils import aperture_photometry
 from scipy.signal import fftconvolve as conv
 from scipy.signal import medfilt as medfilt
+try:
+    import vip
+    is_vip = True
+except:
+    is_vip = False
+
 # -----------------------------------------------------------------------------
 class DRS(object):
     """
@@ -522,7 +527,11 @@ class DRS(object):
                 self._error_msg('It seems a starcenter.fits file was not produced. Check the log above')
         else:
             sys.exit()
-        self._update_center()
+        # --------------------------------------------------------------
+        # If VIP could be imported then update the centering
+        # --------------------------------------------------------------
+        if is_vip:
+            self._update_center()
 
 
     # --------------------------------------------------------------
