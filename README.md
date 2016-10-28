@@ -13,12 +13,12 @@ And is called as:
 The pipeline will prompt questions along the way, to confirm the use of the fits files it identified. For each step (e.g., dark, flat, centering), there are ways to define "blacklist" for the pipeline not to consider some files. 
 
 
-### MANDATORY INPUTS:
+### Mandatory inputs:
 
 * name of the star: a string that should match the name in the header of the science frames
 * path to data: a string pointing to the directory where the fits files are stored. The fits.Z files should be unzipped (no ".fits.Z"). Fits files for several stars or runs can be in the same directory, the pipeline will try to identify the proper calibration files as a function of the date of the observations. I advise not to run the script where the fits files are stored (the pipeline cleans some intermediate products and may move your fits files).
 
-### OPTIONAL INPUTS:
+### Optional inputs:
 
 * During the initialization of the DRS class, it will try to create three directories (by default "sof", "cosmetics", and "science"). These will be created in the directory "./" where the script is run from. You can change the names of these directory with the following keywords:
     * dir_cosmetics: a string for the name of the directory that will contain the dark, flat, starcenter products
@@ -29,9 +29,9 @@ The pipeline will prompt questions along the way, to confirm the use of the fits
 * kernel_width: an integer for median filtering of all columns of the science frames, to remove "hot" pixels that were not flagged in the bad pixel map [ONLY for DPI observations]
 * corono: a boolean to ignore the centering frames (will not apply the star_centering in the cosmetics for the science frames). Default is True (i.e., a coronagraph was used).
 
-### DEPENDENCIES:
+### Dependencies:
 
-* VIP: if VIP is not installed, the pipeline will not try to improve the determination of the centering from the waffle pattern
+* VIP (if not installed, the pipeline will not try to improve the determination of the centering from the waffle pattern)
 * astropy
 * photutils
 * matplotlib
