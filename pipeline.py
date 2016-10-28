@@ -14,7 +14,7 @@ from scipy.signal import fftconvolve, medfilt
 try:
     import vip
     is_vip = True
-except:
+except ImportError:
     is_vip = False
 # -----------------------------------------------------------------------------
 class DRS(object):
