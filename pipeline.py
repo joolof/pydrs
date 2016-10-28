@@ -6,21 +6,16 @@ import datetime
 import subprocess
 import numpy as np
 import scipy.ndimage
-from astropy.io import fits
-from astropy.io import ascii
-from photutils import daofind
+from astropy.io import fits, ascii
 import matplotlib.pyplot as plt
 from astropy.stats import sigma_clip
-from photutils import CircularAperture, CircularAnnulus, aperture_photometry
-from photutils import aperture_photometry
-from scipy.signal import fftconvolve as conv
-from scipy.signal import medfilt as medfilt
+from photutils import CircularAperture, CircularAnnulus, aperture_photometry, daofind
+from scipy.signal import fftconvolve, medfilt
 try:
     import vip
     is_vip = True
 except:
     is_vip = False
-
 # -----------------------------------------------------------------------------
 class DRS(object):
     """
@@ -911,10 +906,10 @@ class DRS(object):
         # Convolve with a kernal if needed
         # --------------------------------------------------------------
         if self._width > 0.:
-            self.Qphi = conv(self.Qphi, kernel, mode='same')
-            self.Uphi = conv(self.Uphi, kernel, mode='same')
-            Q_mean = conv(Q_mean, kernel, mode='same')
-            U_mean = conv(U_mean, kernel, mode='same')
+            self.Qphi = fftconvolve(self.Qphi, kernel, mode='same')
+            self.Uphi = fftconvolve(self.Uphi, kernel, mode='same')
+            Q_mean = fftconvolve(Q_mean, kernel, mode='same')
+            U_mean = fftconvolve(U_mean, kernel, mode='same')
         # --------------------------------------------------------------
         # Plot all the things !!!
         # --------------------------------------------------------------
