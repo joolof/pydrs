@@ -900,8 +900,8 @@ class DRS(object):
         # --------------------------------------------------------------
         # Qphi and Uphi calculations
         # --------------------------------------------------------------
-        self.Qphi =  Q_mean * np.cos(2.*(tt + UphiThetaMin)) + U_mean * np.sin(2.*(tt + UphiThetaMin))
-        self.Uphi = -Q_mean * np.sin(2.*(tt + UphiThetaMin)) + U_mean * np.cos(2.*(tt + UphiThetaMin))
+        self.Qphi = Q_mean * np.cos(2.*(tt + UphiThetaMin)) + U_mean * np.sin(2.*(tt + UphiThetaMin))
+        self.Uphi = Q_mean * np.sin(2.*(tt + UphiThetaMin)) - U_mean * np.cos(2.*(tt + UphiThetaMin))
         # --------------------------------------------------------------
         # Convolve with a kernal if needed
         # --------------------------------------------------------------
