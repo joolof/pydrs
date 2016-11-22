@@ -941,6 +941,8 @@ class DRS(object):
         print 'Writing fits files \'Qphi.fits\' \'Uphi.fits\' ...'
         fits.writeto('Qphi.fits', self.Qphi, clobber = True)
         fits.writeto('Uphi.fits', self.Uphi, clobber = True)
+        fits.writeto('Qmean.fits', Q_mean, clobber = True)
+        fits.writeto('Umean.fits', U_mean, clobber = True)
         print '-'*80
 
     # --------------------------------------------------------------        
