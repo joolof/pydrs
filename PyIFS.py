@@ -78,6 +78,8 @@ class IFS(object):
         self._path_to_fits = path_to_fits
         self._csv_red = False
         self._is_dark_sky = False
+        self._is_dark_psf = False
+        self._is_dark_cen = False
 
         self._is_dark = False
         self._is_flat = False
@@ -138,15 +140,15 @@ class IFS(object):
         # --------------------------------------------------------------
         # Check which recipes have been run already
         # --------------------------------------------------------------
-        # self._check_prod()
+        self._check_prod()
         # --------------------------------------------------------------
         # Run the recipes that needs to be run
         # --------------------------------------------------------------
         # if not self._is_dark_sky: self._dark_sky()
-        self._master_dark()
+        # if not self._is_dark_psf: self._master_dark()
+        if not self._is_dark_cen: self._dark_center()
 
 
-        # if not self._is_dark: 
         # if not self._is_flat: self._flat()
         # if self._corono:
         #     if not self._is_center: self._center()
@@ -167,7 +169,7 @@ class IFS(object):
         return np.sum( (x[:-1] - x[1:]) * (fx[:-1] + fx[1:]) * 0.5)
 
     # --------------------------------------------------------------
-    # Method for the master dark
+    # Method for the dark sky
     # --------------------------------------------------------------
     def _dark_sky(self):
         """
@@ -266,6 +268,66 @@ class IFS(object):
                 self._error_msg('It seems a dark_psf.fits file was not produced. Check the log above')
         else:
             sys.exit()
+
+    # --------------------------------------------------------------
+    # Method for the dark star center
+    # --------------------------------------------------------------
+    def _dark_center(self):
+        """
+        Method to create the sky dark frame
+        """
+        # --------------------------------------------------------------
+        # First, identify the DIT of the CENTER frames
+        # --------------------------------------------------------------
+        fits_center = self._find_fits('CENTER', verbose = False)
+        for i in range(len(fits_center)):
+            idfit = np.where(self._fitsname == fits_center[i])[0][0]
+            if i == 0:
+                c_dit = self._dit[idfit]
+            else:
+                if self._dit[idfit] != c_dit: self._error_msg('Different DIT in the CENTER frames')
+        # --------------------------------------------------------------
+        # Find the DARK measurements with the proper DIT f_dit
+        # --------------------------------------------------------------
+        fits_dark_tmp = self._find_fits('DARK', verbose = True, force_dit = c_dit)
+        fits_dark = [] # list of proper fits file with the correct DIT compared to the CENTER
+        for i in range(len(fits_dark_tmp)):
+            idfit = np.where(self._fitsname == fits_dark_tmp[i])[0][0]
+            if (self._dit[idfit] == c_dit):
+                fits_dark.append(fits_dark_tmp[i])
+        if len(fits_dark) == 0:
+            self._error_msg('Could not find a DARK measurment with a DIT of:' + format(c_dit, '0.1f'))
+        # --------------------------------------------------------------
+        # Write the SOF file
+        # --------------------------------------------------------------
+        f = open(self._dir_sof + '/dark_center.sof', 'w')
+        for i in range(len(fits_dark)):
+            f.write(self._path_to_fits + '/' + fits_dark[i] + '\tIFS_DARK_RAW\n')
+        f.close()
+        # --------------------------------------------------------------        
+        # Run the esorex pipeline
+        # --------------------------------------------------------------        
+        runit = raw_input('\nProceed [Y]/n: ')
+        if runit != 'n':
+            args = ['esorex', 'sph_ifs_master_dark',
+                    '--ifs.master_dark.coll_alg=2',
+                    '--ifs.master_dark.sigma_clip=3.0',
+                    '--ifs.master_dark.smoothing=5',
+                    '--ifs.master_dark.min_acceptable=0.0',
+                    '--ifs.master_dark.max_acceptable=2000.0',
+                    '--ifs.master_dark.outfilename=' + self._dir_cosm + '/dark_cen.fits',
+                    '--ifs.master_dark.badpixfilename=' + self._dir_cosm + '/dark_bpm_cen.fits',
+                    self._dir_sof + '/dark_center.sof']
+            master = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
+            print '-'*80
+            # --------------------------------------------------------------
+            # Check if it actually produced something
+            # --------------------------------------------------------------
+            if not os.path.isfile(self._dir_cosm + '/dark_cen.fits'):
+                self._error_msg('It seems a dark_cen.fits file was not produced. Check the log above')
+        else:
+            sys.exit()
+
 
     # --------------------------------------------------------------        
     # Method for the flat
@@ -805,13 +867,19 @@ class IFS(object):
         Check if the different recipes were run beforehand
         """
         if os.path.isfile(self._dir_cosm + '/dark_cal.fits'):
-            print 'Found a DARK_SKY in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
+            print 'Found a \"dark sky\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
             self._is_dark_sky = True
             print '-'*80
-        if os.path.isfile(self._dir_cosm + '/master_dark.fits'):
-            print 'Found a DARK in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
-            self._is_dark = True
+        if os.path.isfile(self._dir_cosm + '/dark_psf.fits'):
+            print 'Found a \"dark psf\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
+            self._is_dark_psf = True
             print '-'*80
+        if os.path.isfile(self._dir_cosm + '/dark_cen.fits'):
+            print 'Found a \"dark center\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
+            self._is_dark_cen = True
+            print '-'*80
+
+
         if os.path.isfile(self._dir_cosm + '/irdis_flat.fits'):
             print 'Found a FLAT in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
             self._is_flat = True
