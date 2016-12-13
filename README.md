@@ -5,10 +5,10 @@ This is a simple attempt to make a data reduction pipeline for VLT/SPHERE observ
 The ESO esorex software must be installed separately, along with the SPHERE recipes. At the moment, I've used the 0.15.0 version of the recipes (important intermediate products are not saved in version 0.18.0).
 
 The pipeline is imported as:
-> from pydrs import DRS
+> from pydrs import IRDIS
 
 And is called as:
-> data_red = DRS('name of the star', 'path to data')
+> data_red = IRDIS('name of the star', 'path to data')
 
 The pipeline will prompt questions along the way, to confirm the use of the fits files it identified. For each step (e.g., dark, flat, centering), there are ways to define "blacklist" for the pipeline not to consider some files. 
 
@@ -20,7 +20,7 @@ The pipeline will prompt questions along the way, to confirm the use of the fits
 
 ### Optional inputs:
 
-* During the initialization of the DRS class, it will try to create three directories (by default "sof", "cosmetics", and "science"). These will be created in the directory "./" where the script is run from. You can change the names of these directory with the following keywords:
+* During the initialization of the IRDIS class, it will try to create three directories (by default "sof", "cosmetics", and "science"). These will be created in the directory "./" where the script is run from. You can change the names of these directory with the following keywords:
     * dir_cosmetics: a string for the name of the directory that will contain the dark, flat, starcenter products
     * dir_science: a string for the name of the direcotry that will contain the reduced science frames
     * dir_sof: a string for the name of the directory that will contain the files for the esorex recipes

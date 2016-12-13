@@ -17,15 +17,15 @@ try:
 except ImportError:
     is_vip = False
 # -----------------------------------------------------------------------------
-class DRS(object):
+class IRDIS(object):
     """
-    Class for the SPHERE data reduction. The module should be imported as follows:
+    Class for the SPHERE/IRDIS data reduction. The module should be imported as follows:
 
-    > from pydrs import DRS
+    > from pydrs import IRDIS
 
     and can be called as
 
-    > data_red = DRS('Starname', 'path to data')
+    > data_red = IRDIS('Starname', 'path to data')
 
     Everything should be automatic from there and the pipeline will ask
     you some questions along the way.
@@ -842,8 +842,11 @@ class DRS(object):
         # --------------------------------------------------------------
         # Adapted from Tomas Stolker's script
         # --------------------------------------------------------------
-        x = np.linspace(-self._nx/2+0.5, self._nx/2-0.5, self._nx)
-        y = np.linspace(-self._nx/2+0.5, self._nx/2-0.5, self._nx)
+        cx = (self._nx - 1)/2
+        x = np.linspace(-cx, cx, self._nx)
+        y = np.linspace(-cx, cx, self._nx)
+        # x = np.linspace(-self._nx/2+0.5, self._nx/2-0.5, self._nx)
+        # y = np.linspace(-self._nx/2+0.5, self._nx/2-0.5, self._nx)
         xv, yv = np.meshgrid(x,y)
         rr = np.sqrt(xv *xv + yv * yv)
         tt = np.arctan2(yv, xv)
@@ -861,7 +864,7 @@ class DRS(object):
                 r1 = rIn[i]
                 r2 = rOut[j]
                 if r2 > r1:
-                    annulus = CircularAnnulus((self._nx/2., self._nx/2.), r1, r2)
+                    annulus = CircularAnnulus(((self._nx - 1)/2, (self._nx - 1)/2), r1, r2)
                     factor_q = self._annulus_phot(Q_mean, annulus) / self._annulus_phot(Iq_mean, annulus)
                     factor_u = self._annulus_phot(U_mean, annulus) / self._annulus_phot(Iu_mean, annulus)
                     Q_mean_inst = Q_mean - factor_q * Iq_mean
@@ -874,7 +877,7 @@ class DRS(object):
                         r1Min = r1
                         r2Min = r2
                         UphiMin = UphiSum
-        annulus = CircularAnnulus((self._nx/2., self._nx/2.), r1Min, r2Min)
+        annulus = CircularAnnulus(((self._nx - 1)/2, (self._nx - 1)/2), r1Min, r2Min)
         factor_q = self._annulus_phot(Q_mean, annulus) / self._annulus_phot(Iq_mean, annulus)
         factor_u = self._annulus_phot(U_mean, annulus) / self._annulus_phot(Iu_mean, annulus)
         Q_mean -= factor_q * Iq_mean
@@ -1477,12 +1480,12 @@ class DRS(object):
         # First check if there is a csv file listing all the fits files.
         # If not, create it
         # --------------------------------------------------------------        
-        if not os.path.isfile(self._path_to_fits + '/DRS_list.csv'):
+        if not os.path.isfile(self._path_to_fits + '/IRDIS_list.csv'):
             self._list_fits()
         # --------------------------------------------------------------        
         # Read the list of files
         # --------------------------------------------------------------        
-        data = ascii.read(self._path_to_fits + '/DRS_list.csv', delimiter = ';', data_start = 1)
+        data = ascii.read(self._path_to_fits + '/IRDIS_list.csv', delimiter = ';', data_start = 1)
         self._fitsname = data['Name']
         self._obj = data['OBJECT']
         self._arm = data['SEQ.ARM']
@@ -1526,7 +1529,7 @@ class DRS(object):
         """
         list_files = glob.glob(self._path_to_fits + '/*.fits')
         nf = len(list_files)
-        f = open(self._path_to_fits + '/DRS_list.csv', 'w')
+        f = open(self._path_to_fits + '/IRDIS_list.csv', 'w')
         f.write('Name;OBJECT;SEQ.ARM;DPR.CATG;DPR.TYPE;DPR.TECH;SEQ1.DIT;MJD.OBS;FILTER;ND\n')
         for i in range(nf):
             hdu = fits.open(list_files[i])
