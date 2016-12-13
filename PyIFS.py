@@ -11,11 +11,11 @@ import matplotlib.pyplot as plt
 from astropy.stats import sigma_clip
 from photutils import CircularAperture, CircularAnnulus, aperture_photometry, daofind
 from scipy.signal import fftconvolve, medfilt
-try:
-    import vip
-    is_vip = True
-except ImportError:
-    is_vip = False
+# try:
+#     import vip
+#     is_vip = True
+# except ImportError:
+#     is_vip = False
 # -----------------------------------------------------------------------------
 class IFS(object):
     """
@@ -77,6 +77,8 @@ class IFS(object):
         self._width = width
         self._path_to_fits = path_to_fits
         self._csv_red = False
+        self._is_dark_sky = False
+
         self._is_dark = False
         self._is_flat = False
         self._is_center = False
@@ -120,9 +122,9 @@ class IFS(object):
         # --------------------------------------------------------------
         # Print a brief summary of what we have.
         # --------------------------------------------------------------
-        sel = np.where((self._obj == self._starname) & (self._type == 'OBJECT') & (self._arm == 'IRDIS') & 
+        sel = np.where((self._obj == self._starname) & (self._type == 'OBJECT') & (self._arm == 'IFS') & 
             (self._mjd == self.obs_mjd) & (self._dit == self.obs_dit) & (self._filter == self.obs_filter) & 
-            ((self._tech == self.obs_mode) | (self._tech == self.obs_mode + ',CORONOGRAPHY')))[0]
+            (self._tech == self.obs_mode))[0]
         nframes = len(sel)
         txt = '\n' + '-' * 80 + '\n' + self._starname + ' - ' + self.obs_mode + '\nMJD ' + str(self.obs_mjd) + ': ' + str(nframes) + ' frames\n'
         txt += 'DIT: ' + str(self.obs_dit) + ' sec\nFilter: ' + self.obs_filter
@@ -131,8 +133,8 @@ class IFS(object):
         # --------------------------------------------------------------
         # Plot a summary of the center and science observations
         # --------------------------------------------------------------
-        if summary:
-            self._plot_summary()
+        # if summary:
+        #     self._plot_summary()
         # --------------------------------------------------------------
         # Check which recipes have been run already
         # --------------------------------------------------------------
@@ -140,25 +142,69 @@ class IFS(object):
         # --------------------------------------------------------------
         # Run the recipes that needs to be run
         # --------------------------------------------------------------
-        if not self._is_dark: self._master_dark()
-        if not self._is_flat: self._flat()
-        if self._corono:
-            if not self._is_center: self._center()
-        if not self._is_flux: self._flux()
-        if not self._is_science: self._science()
+        if not self._is_dark_sky: self._dark_sky()
+        # if not self._is_dark: self._master_dark()
+        # if not self._is_flat: self._flat()
+        # if self._corono:
+        #     if not self._is_center: self._center()
+        # if not self._is_flux: self._flux()
+        # if not self._is_science: self._science()
         # --------------------------------------------------------------
         # Merge the frames if necessary
         # --------------------------------------------------------------
-        if ((self.obs_mode == 'IMAGE,DUAL') | (self.obs_mode == 'IMAGE,CLASSICAL')):
-            self._merge()
-        if self.obs_mode == 'POLARIMETRY':
-            self._reduce_dpi()
+        # if ((self.obs_mode == 'IMAGE,DUAL') | (self.obs_mode == 'IMAGE,CLASSICAL')):
+        #     self._merge()
+        # if self.obs_mode == 'POLARIMETRY':
+        #     self._reduce_dpi()
 
     # --------------------------------------------------------------
     # Method to integrate something
     # --------------------------------------------------------------
     def _integrate(self,x,fx):
         return np.sum( (x[:-1] - x[1:]) * (fx[:-1] + fx[1:]) * 0.5)
+
+    # --------------------------------------------------------------
+    # Method for the master dark
+    # --------------------------------------------------------------
+    def _dark_sky(self):
+        """
+        Method to create the sky dark frame
+        """
+        # --------------------------------------------------------------
+        # First, identify the proper files
+        # --------------------------------------------------------------
+        # fits_dark = self._find_fits('SKY')
+        fits_dark = self._find_fits('DARK_SKY')
+        # --------------------------------------------------------------
+        # Write the SOF file
+        # --------------------------------------------------------------
+        f = open(self._dir_sof + '/dark_sky.sof', 'w')
+        for i in range(len(fits_dark)):
+            f.write(self._path_to_fits + '/' + fits_dark[i] + '\tIFS_DARK_RAW\n')
+        f.close()
+        # --------------------------------------------------------------        
+        # Run the esorex pipeline
+        # --------------------------------------------------------------        
+        runit = raw_input('\nProceed [Y]/n: ')
+        if runit != 'n':
+            args = ['esorex', 'sph_ifs_master_dark',
+                    '--ifs.master_dark.coll_alg=2',
+                    '--ifs.master_dark.sigma_clip=5.0',
+                    '--ifs.master_dark.smoothing=5',
+                    '--ifs.master_dark.min_acceptable=0.0',
+                    '--ifs.master_dark.max_acceptable=2000.0',
+                    '--ifs.master_dark.outfilename=' + self._dir_cosm + '/dark_cal.fits', 
+                    '--ifs.master_dark.badpixfilename=' + self._dir_cosm + '/dark_bpm_cal.fits',
+                    self._dir_sof + '/dark_sky.sof']
+            master = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
+            print '-'*80
+            # --------------------------------------------------------------
+            # Check if it actually produced something
+            # --------------------------------------------------------------
+            if not os.path.isfile(self._dir_cosm + '/dark_cal.fits'):
+                self._error_msg('It seems a dark_cal.fits file was not produced. Check the log above')
+        else:
+            sys.exit()
 
     # --------------------------------------------------------------
     # Method for the master dark
@@ -1045,6 +1091,10 @@ class IFS(object):
         """
         Check if the different recipes were run beforehand
         """
+        if os.path.isfile(self._dir_cosm + '/dark_cal.fits'):
+            print 'Found a DARK_SKY in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
+            self._is_dark_sky = True
+            print '-'*80
         if os.path.isfile(self._dir_cosm + '/master_dark.fits'):
             print 'Found a DARK in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
             self._is_dark = True
@@ -1086,44 +1136,44 @@ class IFS(object):
         # --------------------------------------------------------------
         # For the DARK measurements
         # --------------------------------------------------------------
-        if action == 'DARK':
+        if action == 'DARK_SKY':
             # catg, arm, tp, dit, bl_txt = 'CALIB', 'IRDIS', 'DARK,BACKGROUND', True, 'dark_blacklist'
-            catg, arm, tp, dit, bl_txt = 'CALIB', 'IRDIS', 'DARK', True, 'dark_blacklist'
+            catg, arm, tp, dit, bl_txt = 'CALIB', 'IFS', 'DARK', True, 'dark_sky_blacklist'
         # --------------------------------------------------------------
         # For the SKY measurements
         # --------------------------------------------------------------
         elif action == 'SKY':
-            catg, arm, tp, dit, bl_txt = 'SCIENCE', 'IRDIS', 'SKY', True, 'sky_blacklist'
+            catg, arm, tp, dit, bl_txt = 'SCIENCE', 'IFS', 'SKY', True, 'sky_blacklist'
         # --------------------------------------------------------------
         # For the BACKGROUND measurements. With restrictions on the DIT for the flux calibration, but with restrictions for the flat-field
         # --------------------------------------------------------------
         elif action == 'BACKGROUND':
-            catg, arm, tp, dit, bl_txt = 'CALIB', 'IRDIS', 'DARK,BACKGROUND', False, 'bkg_blacklist'
+            catg, arm, tp, dit, bl_txt = 'CALIB', 'IFS', 'DARK,BACKGROUND', False, 'bkg_blacklist'
         # --------------------------------------------------------------
         # For the FLAT measurements
         # --------------------------------------------------------------
         elif action == 'FLAT':
-            catg, arm, tp, dit, bl_txt = 'CALIB', 'IRDIS', 'FLAT,LAMP', False, 'flat_blacklist'
+            catg, arm, tp, dit, bl_txt = 'CALIB', 'IFS', 'FLAT,LAMP', False, 'flat_blacklist'
         # --------------------------------------------------------------
         # For the CENTER measurements
         # --------------------------------------------------------------
         elif action == 'CENTER':
-            catg, arm, tp, dit, bl_txt = 'SCIENCE', 'IRDIS', 'OBJECT,CENTER', True, 'center_blacklist'
+            catg, arm, tp, dit, bl_txt = 'SCIENCE', 'IFS', 'OBJECT,CENTER', True, 'center_blacklist'
         # --------------------------------------------------------------
         # For the FLUX measurements
         # --------------------------------------------------------------
         elif action == 'FLUX':
-            catg, arm, tp, dit, bl_txt = 'SCIENCE', 'IRDIS', 'OBJECT,FLUX', False, 'flux_blacklist'
+            catg, arm, tp, dit, bl_txt = 'SCIENCE', 'IFS', 'OBJECT,FLUX', False, 'flux_blacklist'
         # --------------------------------------------------------------
         # For the SCIENCE measurements
         # --------------------------------------------------------------
         elif action == 'SCIENCE':
-            catg, arm, tp, dit, bl_txt = 'SCIENCE', 'IRDIS', 'OBJECT', True, 'science_blacklist'
+            catg, arm, tp, dit, bl_txt = 'SCIENCE', 'IFS', 'OBJECT', True, 'science_blacklist'
         # --------------------------------------------------------------
         # Make the selection. For the FLAT and DISTORTION, the DIT is irrelevant. For the DARK, the filter seems to be irrelevant also.
         # --------------------------------------------------------------
-        if action == 'DARK':
-            sel = np.where((self._catg == catg) & (self._arm == arm) & (self._type == tp) & (self._dit == self.obs_dit))[0]
+        if action == 'DARK_SKY':
+            sel = np.where((self._catg == catg) & (self._arm == arm) & (self._type == tp) & (self._dit <= 2.0))[0]
         else:
             if dit:
                 sel = np.where((self._catg == catg) & (self._filter == self.obs_filter) & (self._arm == arm) & (self._type == tp) & (self._dit == self.obs_dit))[0]
@@ -1183,81 +1233,12 @@ class IFS(object):
         # --------------------------------------------------------------
         # Check which modes are available
         # --------------------------------------------------------------
-        dual = False
-        dpi = False
-        classical = False
         mode_obs = np.unique(self._tech[sel])
-        nb_mode = 0
-        id_mode = 0
         final_mode = None
-        if (('IMAGE,DUAL' in mode_obs) | ('IMAGE,DUAL,CORONOGRAPHY' in mode_obs)):
-            nb_mode += 1
-            dual = True
-            id_mode += 1
-        if (('POLARIMETRY' in mode_obs) | ('POLARIMETRY,CORONOGRAPHY' in mode_obs)):
-            nb_mode += 1
-            dpi = True
-            id_mode += 2
-        if (('IMAGE,CLASSICAL' in mode_obs) | ('IMAGE,CLASSICAL,CORONOGRAPHY' in mode_obs)):
-            nb_mode += 1
-            classical = True
-            id_mode += 4
-        # --------------------------------------------------------------
-        # Print some info and pick the mode you need
-        # --------------------------------------------------------------
-        if id_mode == 1:
-            final_mode = 'IMAGE,DUAL'
-        elif id_mode == 2:
-            final_mode = 'POLARIMETRY'
-        elif id_mode == 4:
-            final_mode = 'IMAGE,CLASSICAL'
-        elif id_mode == 3:
-            print '-'*80
-            print 'Found dual-band and polarimetric observations. '
-            select = raw_input('Which one do you want to use?\n[0] DUAL BAND\n[1] POLATIMETRIC')
-            idm = np.int(select)
-            if ((idm != 0 ) and (idm != 1)):
-                self._error_msg('The answer should be 0 or 1.')
-            if idm == 0:
-                final_mode = 'IMAGE,DUAL'
-            if idm == 1:
-                final_mode = 'POLARIMETRY'
-        elif id_mode == 5:
-            print '-'*80
-            print 'Found classical and dual-band observations. '
-            select = raw_input('Which one do you want to use?\n[0] CLASSICAL\n[1] DUAL BAND')
-            idm = np.int(select)
-            if ((idm != 0 ) and (idm != 1)):
-                self._error_msg('The answer should be 0 or 1.')
-            if idm == 0:
-                final_mode = 'IMAGE,CLASSICAL'
-            if idm == 1:
-                final_mode = 'IMAGE,DUAL'
-        elif id_mode == 6:
-            print '-'*80
-            print 'Found classical and polarimetric observations. '
-            select = raw_input('Which one do you want to use?\n[0] CLASSICAL\n[1] POLATIMETRIC')
-            idm = np.int(select)
-            if ((idm != 0 ) and (idm != 1)):
-                self._error_msg('The answer should be 0 or 1.')
-            if idm == 0:
-                final_mode = 'IMAGE,CLASSICAL'
-            if idm == 1:
-                final_mode = 'POLARIMETRY'
-        elif id_mode == 6:
-            print '-'*80
-            print 'Found dual-band, classical, and polarimetric observations. '
-            select = raw_input('Which one do you want to use?\n[0] DUAL BAND \n[1] CLASSICAL\n[2] POLATIMETRIC')
-            idm = np.int(select)
-            if ((idm != 0 ) and (idm != 1) and (idm != 2)):
-                self._error_msg('The answer should be 0, 1, or 2.')
-            if idm == 0:
-                final_mode = 'IMAGE,DUAL'
-            if idm == 1:
-                final_mode = 'IMAGE,CLASSICAL'
-            if idm == 2:
-                final_mode = 'POLARIMETRY'
-        # print '-'*80
+        if 'IFU' in mode_obs:
+            final_mode = 'IFU'
+        else:
+            self._error_msg('No IFU data in the available raw data.')
         return final_mode
     # --------------------------------------------------------------        
     # Method to get the MJD of the observations. If there are several, will ask you to pick the one you want
@@ -1267,7 +1248,7 @@ class IFS(object):
         Method to get the MJD of the observations. If multiple DITs are available, will ask for the one you want.
         """
         final_mjd = None
-        sel = np.where((self._obj == self._starname) & (self._type == 'OBJECT') & (self._arm == 'IRDIS') & ((self._tech == self.obs_mode) | (self._tech == self.obs_mode + ',CORONOGRAPHY')))[0]
+        sel = np.where((self._obj == self._starname) & (self._type == 'OBJECT') & (self._arm == 'IFS') & (self._tech == self.obs_mode))[0]
         mjd_obs = np.unique(self._mjd[sel]) # the MJD when there were observations
         # --------------------------------------------------------------
         # First case, there were observations only on the same MJD
@@ -1278,7 +1259,7 @@ class IFS(object):
         else:
             txt = 'Which MJD do you want to choose:\n'
             for i in range(len(mjd_obs)):
-                sel = np.where((self._obj == self._starname) & (self._type == 'OBJECT') & (self._mjd == mjd_obs[i]) & (self._arm == 'IRDIS') & ((self._tech == self.obs_mode) | (self._tech == self.obs_mode + ',CORONOGRAPHY')))[0]
+                sel = np.where((self._obj == self._starname) & (self._type == 'OBJECT') & (self._mjd == mjd_obs[i]) & (self._arm == 'IFS') & (self._tech == self.obs_mode))[0]
                 txt += '[' + str(i) + '] MJD ' + str(mjd_obs[i]) + ' (' + str(len(sel)) + ' frames)' + '\n'
 
             select = raw_input(txt)
@@ -1287,7 +1268,6 @@ class IFS(object):
                 self._error_msg('Select the proper number (' + str(idm) + ')')
             else:
                 final_mjd = mjd_obs[idm]
-        # print '-'*80
         return final_mjd
     # --------------------------------------------------------------        
     # Method to get the DIT of the observations. If there are several, will ask you to pick the one you want
@@ -1297,7 +1277,7 @@ class IFS(object):
         Method to get the MJD of the observations. If multiple DITs are available, will ask for the one you want.
         """
         final_dit = None
-        sel = np.where((self._obj == self._starname) & (self._type == 'OBJECT') & (self._arm == 'IRDIS') & (self._mjd == self.obs_mjd) & ((self._tech == self.obs_mode) | (self._tech == self.obs_mode + ',CORONOGRAPHY')))[0]
+        sel = np.where((self._obj == self._starname) & (self._type == 'OBJECT') & (self._arm == 'IFS') & (self._mjd == self.obs_mjd) & (self._tech == self.obs_mode))[0]
         dit_obs = np.unique(self._dit[sel]) # the DIT of observations
         # --------------------------------------------------------------
         # First case, there were observations only on the same MJD
@@ -1308,7 +1288,7 @@ class IFS(object):
         else:
             txt = 'Which one do you want to choose:\n'
             for i in range(len(dit_obs)):
-                sel = np.where((self._obj == self._starname) & (self._type == 'OBJECT') & (self._arm == 'IRDIS') & (self._dit == dit_obs[i]) & (self._mjd == self.obs_mjd) & ((self._tech == self.obs_mode) | (self._tech == self.obs_mode + ',CORONOGRAPHY')))[0]
+                sel = np.where((self._obj == self._starname) & (self._type == 'OBJECT') & (self._arm == 'IFS') & (self._dit == dit_obs[i]) & (self._mjd == self.obs_mjd) & (self._tech == self.obs_mode))[0]
                 txt += '[' + str(i) + '] DIT = ' + str(dit_obs[i]) + ' s (' + str(len(sel)) +  ' frames)\n'
 
             select = raw_input(txt)
@@ -1327,7 +1307,7 @@ class IFS(object):
         Method to get the filter of the observations
         """
         final_filter = ''
-        sel = np.where((self._obj == self._starname) & (self._type == 'OBJECT') & (self._arm == 'IRDIS') & (self._mjd == self.obs_mjd) & (self._dit == self.obs_dit) & ((self._tech == self.obs_mode) | (self._tech == self.obs_mode + ',CORONOGRAPHY')))[0]
+        sel = np.where((self._obj == self._starname) & (self._type == 'OBJECT') & (self._arm == 'IFS') & (self._mjd == self.obs_mjd) & (self._dit == self.obs_dit) & (self._tech == self.obs_mode))[0]
         filter_obs = np.unique(self._filter[sel]) # the filter of the observations
         # --------------------------------------------------------------
         # First case, there were observations in the same filter
@@ -1338,7 +1318,7 @@ class IFS(object):
         else:
             txt = 'Which one do you want to choose:\n'
             for i in range(len(filter_obs)):
-                sel = np.where((self._obj == self._starname) & (self._type == 'OBJECT') & (self._arm == 'IRDIS') & (self._dit == self.obs_dit) & (self._filter == filter_obs[i]) & (self._mjd == self.obs_mjd) & ((self._tech == self.obs_mode) | (self._tech == self.obs_mode + ',CORONOGRAPHY')))[0]
+                sel = np.where((self._obj == self._starname) & (self._type == 'OBJECT') & (self._arm == 'IFS') & (self._dit == self.obs_dit) & (self._filter == filter_obs[i]) & self._mjd == self.obs_mjd) & ((self._tech == self.obs_mode))[0]
                 txt += '[' + str(i) + '] filter = ' + str(filter_obs[i]) + ' (' + str(len(sel)) +  ' frames)\n'
 
             select = raw_input(txt)
@@ -1493,8 +1473,7 @@ class IFS(object):
         self._type = data['DPR.TYPE']
         self._tech = data['DPR.TECH']
         self._dit = data['SEQ1.DIT']
-        self._filter = data['FILTER']
-        self._nd = data['ND']
+        self._filter = data['INS2.COMB.IFS']
         mjd = np.array(data['MJD.OBS'])
         mjd -= 0.5
         self._mjd = mjd.astype(int)
@@ -1530,7 +1509,7 @@ class IFS(object):
         list_files = glob.glob(self._path_to_fits + '/*.fits')
         nf = len(list_files)
         f = open(self._path_to_fits + '/IFS_list.csv', 'w')
-        f.write('Name;OBJECT;SEQ.ARM;DPR.CATG;DPR.TYPE;DPR.TECH;SEQ1.DIT;MJD.OBS;FILTER;ND\n')
+        f.write('Name;OBJECT;SEQ.ARM;DPR.CATG;DPR.TYPE;DPR.TECH;SEQ1.DIT;INS2.COMB.IFS;MJD.OBS\n')
         for i in range(nf):
             hdu = fits.open(list_files[i])
             header = hdu[0].header
@@ -1538,9 +1517,11 @@ class IFS(object):
             # if 'NAXIS1' in header.keys():
             try:
                 if 'ESO SEQ ARM' in header.keys():
-                    txt = list_files[i].replace(self._path_to_fits, '') + ';' + header['OBJECT'] + ';' + header['ESO SEQ ARM'] + ';' + header['ESO DPR CATG'] + ';'
+                    txt = list_files[i].replace(self._path_to_fits, '') + ';' + header['OBJECT'] + ';' 
+                    txt += header['ESO SEQ ARM'] + ';' + header['ESO DPR CATG'] + ';'
                     txt += header['ESO DPR TYPE'] + ';' + header['ESO DPR TECH'] + ';' 
-                    txt += str(header['ESO DET SEQ1 DIT']) + ';' + str(header['MJD-OBS']) + ';' + header['HIERARCH ESO INS COMB IFLT'] + ';' + header['HIERARCH ESO INS4 FILT2 NAME'] + '\n'
+                    txt += str(header['ESO DET SEQ1 DIT']) + ';' + header['ESO INS2 COMB IFS'] + ';'
+                    txt += str(header['MJD-OBS']) + '\n'
                     f.write(txt)
             except:
                 print list_files[i]
