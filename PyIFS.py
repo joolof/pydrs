@@ -80,6 +80,7 @@ class IFS(object):
         self._is_dark_sky = False
         self._is_dark_psf = False
         self._is_dark_cen = False
+        self._is_dark_corono = False
 
         self._is_dark = False
         self._is_flat = False
@@ -147,6 +148,7 @@ class IFS(object):
         # if not self._is_dark_sky: self._dark_sky()
         # if not self._is_dark_psf: self._master_dark()
         if not self._is_dark_cen: self._dark_center()
+        if not self._is_dark_corono: self._dark_corono()
 
 
         # if not self._is_flat: self._flat()
@@ -325,6 +327,66 @@ class IFS(object):
             # --------------------------------------------------------------
             if not os.path.isfile(self._dir_cosm + '/dark_cen.fits'):
                 self._error_msg('It seems a dark_cen.fits file was not produced. Check the log above')
+        else:
+            sys.exit()
+
+
+    # --------------------------------------------------------------
+    # Method for the dark star center
+    # --------------------------------------------------------------
+    def _dark_corono(self):
+        """
+        Method to create the corongraphic dark frame
+        """
+        # --------------------------------------------------------------
+        # First, identify the DIT of the CENTER frames
+        # --------------------------------------------------------------
+        fits_sci = self._find_fits('SCIENCE', verbose = False)
+        for i in range(len(fits_sci)):
+            idfit = np.where(self._fitsname == fits_sci[i])[0][0]
+            if i == 0:
+                s_dit = self._dit[idfit]
+            else:
+                if self._dit[idfit] != s_dit: self._error_msg('Different DIT in the SCIENCE frames')
+        # --------------------------------------------------------------
+        # Find the DARK measurements with the proper DIT f_dit
+        # --------------------------------------------------------------
+        fits_dark_tmp = self._find_fits('DARK', verbose = True, force_dit = s_dit)
+        fits_dark = [] # list of proper fits file with the correct DIT compared to the CENTER
+        for i in range(len(fits_dark_tmp)):
+            idfit = np.where(self._fitsname == fits_dark_tmp[i])[0][0]
+            if (self._dit[idfit] == s_dit):
+                fits_dark.append(fits_dark_tmp[i])
+        if len(fits_dark) == 0:
+            self._error_msg('Could not find a DARK measurment with a DIT of:' + format(s_dit, '0.1f'))
+        # --------------------------------------------------------------
+        # Write the SOF file
+        # --------------------------------------------------------------
+        f = open(self._dir_sof + '/dark_corono.sof', 'w')
+        for i in range(len(fits_dark)):
+            f.write(self._path_to_fits + '/' + fits_dark[i] + '\tIFS_DARK_RAW\n')
+        f.close()
+        # --------------------------------------------------------------        
+        # Run the esorex pipeline
+        # --------------------------------------------------------------        
+        runit = raw_input('\nProceed [Y]/n: ')
+        if runit != 'n':
+            args = ['esorex', 'sph_ifs_master_dark',
+                    '--ifs.master_dark.coll_alg=2',
+                    '--ifs.master_dark.sigma_clip=3.0',
+                    '--ifs.master_dark.smoothing=5',
+                    '--ifs.master_dark.min_acceptable=0.0',
+                    '--ifs.master_dark.max_acceptable=2000.0',
+                    '--ifs.master_dark.outfilename=' + self._dir_cosm + '/dark_cor.fits',
+                    '--ifs.master_dark.badpixfilename=' + self._dir_cosm + '/dark_bpm_cor.fits',
+                    self._dir_sof + '/dark_corono.sof']
+            master = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
+            print '-'*80
+            # --------------------------------------------------------------
+            # Check if it actually produced something
+            # --------------------------------------------------------------
+            if not os.path.isfile(self._dir_cosm + '/dark_cor.fits'):
+                self._error_msg('It seems a dark_cor.fits file was not produced. Check the log above')
         else:
             sys.exit()
 
@@ -877,6 +939,10 @@ class IFS(object):
         if os.path.isfile(self._dir_cosm + '/dark_cen.fits'):
             print 'Found a \"dark center\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
             self._is_dark_cen = True
+            print '-'*80
+        if os.path.isfile(self._dir_cosm + '/dark_cor.fits'):
+            print 'Found a \"dark corono\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
+            self._is_dark_corono = True
             print '-'*80
 
 
