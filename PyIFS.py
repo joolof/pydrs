@@ -138,12 +138,15 @@ class IFS(object):
         # --------------------------------------------------------------
         # Check which recipes have been run already
         # --------------------------------------------------------------
-        self._check_prod()
+        # self._check_prod()
         # --------------------------------------------------------------
         # Run the recipes that needs to be run
         # --------------------------------------------------------------
-        if not self._is_dark_sky: self._dark_sky()
-        # if not self._is_dark: self._master_dark()
+        # if not self._is_dark_sky: self._dark_sky()
+        self._master_dark()
+
+
+        # if not self._is_dark: 
         # if not self._is_flat: self._flat()
         # if self._corono:
         #     if not self._is_center: self._center()
@@ -173,8 +176,7 @@ class IFS(object):
         # --------------------------------------------------------------
         # First, identify the proper files
         # --------------------------------------------------------------
-        # fits_dark = self._find_fits('SKY')
-        fits_dark = self._find_fits('DARK_SKY')
+        fits_dark = self._find_fits('DARK_SKY', force_dit = 1.650726)
         # --------------------------------------------------------------
         # Write the SOF file
         # --------------------------------------------------------------
@@ -214,37 +216,54 @@ class IFS(object):
         Method to create the master dark frame
         """
         # --------------------------------------------------------------
-        # First, identify the proper files
+        # First, identify the DIT of the FLUX frames
         # --------------------------------------------------------------
-        # fits_dark = self._find_fits('SKY')
-        fits_dark = self._find_fits('DARK')
+        fits_flux = self._find_fits('FLUX', verbose = False)
+        for i in range(len(fits_flux)):
+            idfit = np.where(self._fitsname == fits_flux[i])[0][0]
+            if i == 0:
+                f_dit = self._dit[idfit]
+            else:
+                if self._dit[idfit] != f_dit: self._error_msg('Different DIT in the flux measurements')
+        # --------------------------------------------------------------
+        # Find the DARK measurements with the proper DIT f_dit
+        # --------------------------------------------------------------
+        fits_dark_tmp = self._find_fits('DARK', verbose = True, force_dit = f_dit)
+        fits_dark = [] # list of proper fits file with the correct DIT compared to the FLUX
+        for i in range(len(fits_dark_tmp)):
+            idfit = np.where(self._fitsname == fits_dark_tmp[i])[0][0]
+            if (self._dit[idfit] == f_dit):
+                fits_dark.append(fits_dark_tmp[i])
+        if len(fits_dark) == 0:
+            self._error_msg('Could not find a DARK measurment with a DIT of:' + format(f_dit, '0.1f'))
         # --------------------------------------------------------------
         # Write the SOF file
         # --------------------------------------------------------------
         f = open(self._dir_sof + '/master_dark.sof', 'w')
         for i in range(len(fits_dark)):
-            f.write(self._path_to_fits + '/' + fits_dark[i] + '\tIRD_DARK_RAW\n')
+            f.write(self._path_to_fits + '/' + fits_dark[i] + '\tIFS_DARK_RAW\n')
         f.close()
         # --------------------------------------------------------------        
         # Run the esorex pipeline
         # --------------------------------------------------------------        
         runit = raw_input('\nProceed [Y]/n: ')
         if runit != 'n':
-            args = ['esorex', 'sph_ird_master_dark', 
-                    # '--ird.master_dark.clean_mean.reject_low=0',
-                    # '--ird.master_dark.clean_mean.reject_high=0',
-                    # '--ird.master_dark.sigma_clip=1.0',
-                    '--ird.master_dark.outfilename=' + self._dir_cosm + '/master_dark.fits', 
-                    '--ird.master_dark.save_addprod=TRUE',
-                    '--ird.master_dark.badpixfilename=' + self._dir_cosm + '/static_badpixels.fits',
+            args = ['esorex', 'sph_ifs_master_dark', 
+                    '--ifs.master_dark.coll_alg=2',
+                    '--ifs.master_dark.sigma_clip=3.0',
+                    '--ifs.master_dark.smoothing=5',
+                    '--ifs.master_dark.min_acceptable=0.0',
+                    '--ifs.master_dark.max_acceptable=2000.0',
+                    '--ifs.master_dark.outfilename=' + self._dir_cosm + '/dark_psf.fits',
+                    '--ifs.master_dark.badpixfilename=' + self._dir_cosm + '/dark_bpm_psf.fits',
                     self._dir_sof + '/master_dark.sof']
             master = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
             print '-'*80
             # --------------------------------------------------------------
             # Check if it actually produced something
             # --------------------------------------------------------------
-            if not os.path.isfile(self._dir_cosm + '/master_dark.fits'):
-                self._error_msg('It seems a master_dark.fits file was not produced. Check the log above')
+            if not os.path.isfile(self._dir_cosm + '/dark_psf.fits'):
+                self._error_msg('It seems a dark_psf.fits file was not produced. Check the log above')
         else:
             sys.exit()
 
@@ -726,312 +745,6 @@ class IFS(object):
 
         plt.show()
 
-    # --------------------------------------------------------------
-    # Method to get the STOKES keywords from the fits files. Since 
-    # this may be done several times, it should limit the reading time.
-    # --------------------------------------------------------------
-    def _get_stokes(self):
-        """
-        Read all the fits files in science.sof and extract the stokes keyword
-        """
-        list_files = glob.glob(self._dir_sci + '/SPHER*_total.fits')
-        bl = self._read_blacklist('DPI_blacklist.txt')
-        # --------------------------------------------------------------
-        # Read the sof file and check the ordering of the fits files.
-        # --------------------------------------------------------------
-        fitsname, stokes, date = [], [], []
-        for i in range(len(list_files)):
-            if list_files[i] not in bl:
-                fitsname.append(list_files[i])
-                hdu = fits.open(list_files[i])
-                stokes.append(hdu[0].header['HIERARCH ESO OCS DPI H2RT STOKES'])
-                date.append(hdu[0].header['DATE-OBS'])
-                hdu.close()
-        return fitsname, stokes, date
-
-    # --------------------------------------------------------------
-    # Method to clean for the readout noise before averaging the frames.
-    # --------------------------------------------------------------
-    def _clean_frame(self, frame):
-        """
-        Will subtract the average of a few pixels at the top and bottom of each column and
-        will run a median filter for each column. This is done for all DITs in a given frame 
-        and will return the median
-        """
-        # --------------------------------------------------------------
-        # For the selection of the pixels on which the mean readout will be estimated
-        # --------------------------------------------------------------
-        dx, bx = 100, 30
-        xr = np.arange(self._nx)
-        sel_readout = ((xr > bx ) & (xr < bx + dx) | (xr < self._nx - bx - 1) & (xr > self._nx - bx - 1 - dx))
-        ndit = np.shape(frame)[0]
-        cleaned = np.zeros(shape=(ndit, self._nx, self._nx))
-        # --------------------------------------------------------------
-        # 
-        # --------------------------------------------------------------
-        for i in range(ndit):
-            med_col = np.median(frame[i,sel_readout,:],axis=0)
-            for j in range(self._nx):
-                cleaned[i,:,j] = frame[i,:,j] - med_col[j]
-                if self._km > 0:
-                    cleaned[i,:,j] = medfilt(cleaned[i,:,j], self._km)
-        return np.median(cleaned, axis = 0)
-
-    # --------------------------------------------------------------
-    # Method for the DPI data reduction
-    # --------------------------------------------------------------
-    def _reduce_dpi(self):
-        """
-        Method to reduce the DPI data, based on Tomas Stolker's script
-        """
-        # --------------------------------------------------------------
-        # Some parameters for the optimization
-        # --------------------------------------------------------------
-        # For the instrumental polarization
-        instPolMin = 5
-        instPolMax =  30
-        instPolStep = 0.5
-        # For the HWP plate
-        thetaMin = -10.0
-        thetaMax = 10.0
-        thetaStep = 0.01
-        # For the plot
-        vmin = -0.5
-        vmax = 5.5
-        # --------------------------------------------------------------
-        # Get the Stokes parameters
-        # --------------------------------------------------------------
-        fitsname, stokes, date = self._get_stokes()
-        # --------------------------------------------------------------
-        # Ask for confirmation
-        # --------------------------------------------------------------
-        print 'Will use the following frames:'
-        for i in range(len(fitsname)):
-            print fitsname[i] + '\t' + stokes[i] + '\t' + date[i].split('T')[1]
-        txt = '\n(create a \'DPI_blacklist\' if you want to exclude some frames.)'
-        print txt
-        print '-'*80
-        runit = raw_input('\nProceed [Y]/n: ')
-        if runit == 'n':
-            sys.exit()
-        # --------------------------------------------------------------
-        # Get a gaussian kernel if I want to smooth things up
-        # --------------------------------------------------------------
-        if self._width > 0.:
-            Xin, Yin = np.mgrid[0:self._nx, 0:self._nx]
-            kernel = self._gaussian((self._nx)/2, (self._nx)/2, self._width , self._width)(Xin, Yin)
-        # --------------------------------------------------------------
-        # Here we go !
-        # --------------------------------------------------------------
-        print 'Processing all the science frames ...'
-        Qp = np.zeros(shape=(2, self._nx, self._nx))
-        Qm = np.zeros(shape=(2, self._nx, self._nx))
-        Up = np.zeros(shape=(2, self._nx, self._nx))
-        Um = np.zeros(shape=(2, self._nx, self._nx))
-        dQp, dQm, dUp, dUm = 0., 0., 0., 0.
-        for i in range(len(fitsname)):
-            fitsfile = fitsname[i].replace('_total.fits','')
-            # --------------------------------------------------------------
-            # Read the left frame
-            # --------------------------------------------------------------
-            hdu = fits.open(fitsfile+'_left.fits')
-            stokes = hdu[0].header['HIERARCH ESO OCS DPI H2RT STOKES']
-            ordinary = self._clean_frame(hdu[0].data) #np.mean(hdu[0].data, axis=0)
-            hdu.close()
-            # --------------------------------------------------------------
-            # Read the right frame
-            # --------------------------------------------------------------
-            hdu = fits.open(fitsfile+'_right.fits')
-            stokes = hdu[0].header['HIERARCH ESO OCS DPI H2RT STOKES']
-            extraord = self._clean_frame(hdu[0].data) #np.mean(hdu[0].data, axis=0)
-            hdu.close()
-            # --------------------------------------------------------------
-            # Remove some NaN
-            # --------------------------------------------------------------
-            ordinary = np.nan_to_num(ordinary)
-            extraord = np.nan_to_num(extraord)
-            # --------------------------------------------------------------
-            # Fill in the array and update the dit
-            # --------------------------------------------------------------
-            if stokes == "Qplus":
-                Qp[0,] += ordinary
-                Qp[1,] += extraord
-                dQp += 1.
-            elif stokes == "Qminus":
-                Qm[0,] += ordinary
-                Qm[1,] += extraord
-                dQm += 1.
-            elif stokes == "Uplus":
-                Up[0,] += ordinary
-                Up[1,] += extraord
-                dUp += 1.
-            elif stokes == "Uminus":
-                Um[0,] += ordinary
-                Um[1,] += extraord
-                dUm += 1.
-        # --------------------------------------------------------------
-        # Normalize the array.
-        # --------------------------------------------------------------
-        Qp = Qp/dQp
-        Qm = Qm/dQm
-        Up = Up/dUp
-        Um = Um/dUm
-        print 'Number of frames used: ' + format(dQp, '0.0f') + ' | ' + format(dQm, '0.0f') + ' | ' + format(dUp, '0.0f') + ' | ' + format(dUm, '0.0f')
-        print '-'*80
-        # --------------------------------------------------------------
-        # Double difference, Canovas et al. (2011)
-        # --------------------------------------------------------------
-        Q_mean = ( (Qp[0,] - Qp[1,]) - (Qm[0,] - Qm[1,]) ) / 2.
-        U_mean = ( (Up[0,] - Up[1,]) - (Um[0,] - Um[1,]) ) / 2.
-        Iq_mean = (Qp[0,] + Qp[1,] + Qm[0,] + Qm[1,]) / 2.
-        Iu_mean = (Up[0,] + Up[1,] + Um[0,] + Um[1,]) / 2.
-        # --------------------------------------------------------------
-        # Adapted from Tomas Stolker's script
-        # --------------------------------------------------------------
-        cx = (self._nx - 1)/2
-        x = np.linspace(-cx, cx, self._nx)
-        y = np.linspace(-cx, cx, self._nx)
-        # x = np.linspace(-self._nx/2+0.5, self._nx/2-0.5, self._nx)
-        # y = np.linspace(-self._nx/2+0.5, self._nx/2-0.5, self._nx)
-        xv, yv = np.meshgrid(x,y)
-        rr = np.sqrt(xv *xv + yv * yv)
-        tt = np.arctan2(yv, xv)
-        # --------------------------------------------------------------
-        # Instrumental polarization correction
-        # --------------------------------------------------------------
-        print 'Correction for the instrumental polarization ...'
-        rIn = np.arange(instPolMin,instPolMax,instPolStep) # [pixels]
-        rOut = np.arange(instPolMin,instPolMax,instPolStep) # [pixels]
-        UphiInst = np.zeros(shape=(len(rIn),len(rOut)))
-        UphiMin, r1Min, r2Min = 1e100, 0., 0.
-        # Loop over a wide range of annulii
-        for i in range(len(rIn)):
-            for j in range(len(rOut)):
-                r1 = rIn[i]
-                r2 = rOut[j]
-                if r2 > r1:
-                    annulus = CircularAnnulus(((self._nx - 1)/2, (self._nx - 1)/2), r1, r2)
-                    factor_q = self._annulus_phot(Q_mean, annulus) / self._annulus_phot(Iq_mean, annulus)
-                    factor_u = self._annulus_phot(U_mean, annulus) / self._annulus_phot(Iu_mean, annulus)
-                    Q_mean_inst = Q_mean - factor_q * Iq_mean
-                    U_mean_inst = U_mean - factor_u * Iu_mean
-
-                    Uphi_corrected = Q_mean_inst * np.sin(2.*(tt)) - U_mean_inst * np.cos(2.*(tt))
-                    UphiSum = np.nansum(np.abs(Uphi_corrected))
-                    UphiInst[i,j] = UphiSum
-                    if UphiSum < UphiMin:
-                        r1Min = r1
-                        r2Min = r2
-                        UphiMin = UphiSum
-        annulus = CircularAnnulus(((self._nx - 1)/2, (self._nx - 1)/2), r1Min, r2Min)
-        factor_q = self._annulus_phot(Q_mean, annulus) / self._annulus_phot(Iq_mean, annulus)
-        factor_u = self._annulus_phot(U_mean, annulus) / self._annulus_phot(Iu_mean, annulus)
-        Q_mean -= factor_q * Iq_mean
-        U_mean -= factor_u * Iu_mean
-        print 'Annulus rIn-rOut [pixels] = '+str(r1Min)+'-'+str(r2Min)
-        print '-'*80
-        # --------------------------------------------------------------
-        # Uphi minimization for the HWP offset
-        # --------------------------------------------------------------
-        print 'Correction for the HWP offset ...'
-        offset = np.arange(thetaMin,thetaMax,thetaStep)
-        UphiMin = 1e100
-        UphiThetaMin = 0.
-        for i in range(len(offset)):
-            theta = offset[i] * np.pi/180.
-            Uphi_corrected = Q_mean * np.sin(2.*(tt + theta)) - U_mean * np.cos(2.*(tt + theta))
-            UphiSum = np.nansum(np.abs(Uphi_corrected))
-            if UphiSum < UphiMin:
-                UphiThetaMin = theta
-                UphiMin = UphiSum
-        print 'Theta offset [deg] = ' + str(UphiThetaMin * 180. / np.pi)
-        print '-'*80
-        # --------------------------------------------------------------
-        # Qphi and Uphi calculations
-        # --------------------------------------------------------------
-        self.Qphi = Q_mean * np.cos(2.*(tt + UphiThetaMin)) + U_mean * np.sin(2.*(tt + UphiThetaMin))
-        self.Uphi = Q_mean * np.sin(2.*(tt + UphiThetaMin)) - U_mean * np.cos(2.*(tt + UphiThetaMin))
-        # --------------------------------------------------------------
-        # Convolve with a kernal if needed
-        # --------------------------------------------------------------
-        if self._width > 0.:
-            self.Qphi = fftconvolve(self.Qphi, kernel, mode='same')
-            self.Uphi = fftconvolve(self.Uphi, kernel, mode='same')
-            Q_mean = fftconvolve(Q_mean, kernel, mode='same')
-            U_mean = fftconvolve(U_mean, kernel, mode='same')
-        # --------------------------------------------------------------
-        # Plot all the things !!!
-        # --------------------------------------------------------------
-        fig = plt.figure(figsize=(12,12))
-        plt.subplots_adjust(hspace=0.1,wspace=0.1,top=0.95,left=0.1,right=0.95)
-        ax1 = plt.subplot2grid((2,2), (0, 0))
-        cb = ax1.imshow(self.Qphi, origin = 'lower', cmap = 'afmhot', vmin = vmin, vmax = vmax)
-        ax1.set_ylabel('$\delta$ [$\,^{\prime\prime}$]')
-        ax1.set_title('$Q_\phi$')
-
-        ax2 = plt.subplot2grid((2,2), (0, 1))
-        cb = ax2.imshow(self.Uphi, origin = 'lower', cmap = 'afmhot', vmin = vmin, vmax = vmax)
-        ax2.set_title('$U_\phi$')
-
-        ax3 = plt.subplot2grid((2,2), (1, 0))
-        cb = ax3.imshow(Q_mean, origin = 'lower', cmap = 'afmhot', vmin = vmin, vmax = vmax)
-        ax3.set_xlabel('$\\alpha$ [$\,^{\prime\prime}$]')
-        ax3.set_ylabel('$\delta$ [$\,^{\prime\prime}$]')
-        ax3.set_title('$Q$')
-
-        ax4 = plt.subplot2grid((2,2), (1, 1))
-        cb = ax4.imshow(U_mean, origin = 'lower', cmap = 'afmhot', vmin = vmin, vmax = vmax)
-        ax4.set_xlabel('$\\alpha$ [$\,^{\prime\prime}$]')
-        ax4.set_title('$U$')
-        plt.show()
-        # --------------------------------------------------------------
-        # Save fits files
-        # --------------------------------------------------------------
-        print 'Writing fits files \'Qphi.fits\' \'Uphi.fits\' ...'
-        fits.writeto('Qphi.fits', self.Qphi, clobber = True)
-        fits.writeto('Uphi.fits', self.Uphi, clobber = True)
-        fits.writeto('Qmean.fits', Q_mean, clobber = True)
-        fits.writeto('Umean.fits', U_mean, clobber = True)
-        print '-'*80
-
-    # --------------------------------------------------------------        
-    # Method for the photometry in an annulus
-    # --------------------------------------------------------------        
-    def _annulus_phot(self, data, ring):
-        """
-        Simple method to derive the photometry in a given annulus
-        """
-        phot_table = aperture_photometry(data, ring, method='exact')
-        return phot_table['aperture_sum']
-
-
-    # --------------------------------------------------------------        
-    # Method for the DPI data reduction
-    # --------------------------------------------------------------        
-    def _esorex_dpi(self):
-        """
-        Method to run the esorex recipe on the DPI observations
-        (using the science_imaging recipe.)
-        """
-        runit = raw_input('\nProceed [Y]/n: ')
-        if runit != 'n':
-            args = ['esorex', 'sph_ird_science_imaging', 
-                        self._dir_sof + '/science.sof']
-            sci_dbi = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
-            # --------------------------------------------------------------        
-            # Clean up the fits files
-            # --------------------------------------------------------------        
-            mvfiles = glob.glob('SPHER*.fits')
-            for i in range(len(mvfiles)):
-                args = ['mv', mvfiles[i], self._dir_sci + '/']
-                mvfits = subprocess.Popen(args).wait()
-            mvfiles = glob.glob('SPHER*.txt')
-            for i in range(len(mvfiles)):
-                args = ['rm', mvfiles[i]]
-                rmtxt = subprocess.Popen(args).wait()
-            print '-'*80
-        else:
-            sys.exit()
     # --------------------------------------------------------------        
     # Method for the DBI data reduction
     # --------------------------------------------------------------        
@@ -1129,16 +842,24 @@ class IFS(object):
     # --------------------------------------------------------------
     # Method to make a summary of what can be done.
     # --------------------------------------------------------------
-    def _find_fits(self, action, blacklist = True, verbose = True):
+    def _find_fits(self, action, blacklist = True, verbose = True, force_dit = None):
         """
         Method to identify what can be done (dark, flat, distortion, star center)
         """
         # --------------------------------------------------------------
-        # For the DARK measurements
+        # For the DARK SKY measurements
         # --------------------------------------------------------------
         if action == 'DARK_SKY':
-            # catg, arm, tp, dit, bl_txt = 'CALIB', 'IRDIS', 'DARK,BACKGROUND', True, 'dark_blacklist'
             catg, arm, tp, dit, bl_txt = 'CALIB', 'IFS', 'DARK', True, 'dark_sky_blacklist'
+            if force_dit is None:
+                self._error_msg('You should provide a value for force_dit for the dark sky reduction')
+        # --------------------------------------------------------------
+        # For the DARK measurements
+        # --------------------------------------------------------------
+        elif action == 'DARK':
+            catg, arm, tp, dit, bl_txt = 'CALIB', 'IFS', 'DARK', False, 'dark_blacklist'
+            if force_dit is None:
+                self._error_msg('You should provide a value for force_dit for the dark reduction')
         # --------------------------------------------------------------
         # For the SKY measurements
         # --------------------------------------------------------------
@@ -1172,8 +893,8 @@ class IFS(object):
         # --------------------------------------------------------------
         # Make the selection. For the FLAT and DISTORTION, the DIT is irrelevant. For the DARK, the filter seems to be irrelevant also.
         # --------------------------------------------------------------
-        if action == 'DARK_SKY':
-            sel = np.where((self._catg == catg) & (self._arm == arm) & (self._type == tp) & (self._dit <= 2.0))[0]
+        if ((action == 'DARK_SKY') | (action == 'DARK')):
+            sel = np.where((self._catg == catg) & (self._arm == arm) & (self._type == tp) & (self._dit == force_dit))[0]
         else:
             if dit:
                 sel = np.where((self._catg == catg) & (self._filter == self.obs_filter) & (self._arm == arm) & (self._type == tp) & (self._dit == self.obs_dit))[0]
@@ -1188,6 +909,11 @@ class IFS(object):
             for i in range(len(sel)):
                 txt += '\n' + self._fitsname[sel[i]] + '\t' + str(self._catg[sel[i]]) + '\t' + str(self._type[sel[i]]) + '\t' + str(self._tech[sel[i]]) + '\t' + str(self._mjd[sel[i]]) + '\t' + str(self._dit[sel[i]]) + '\t' + str(self._filter[sel[i]])
             self._error_msg('Could not find proper ' + str(action) + ' measurements:'+txt)
+        # else:
+        #     txt = 'Found: \n'
+        #     for i in range(len(sel)):
+        #         txt += '\n' + self._fitsname[sel[i]] + '\t' + str(self._catg[sel[i]]) + '\t' + str(self._type[sel[i]]) + '\t' + str(self._tech[sel[i]]) + '\t' + str(self._mjd[sel[i]]) + '\t' + str(self._dit[sel[i]]) + '\t' + str(self._filter[sel[i]])
+        #     print txt
         # --------------------------------------------------------------
         # Find the frames that were taken closest to the science observations
         # --------------------------------------------------------------
