@@ -87,6 +87,8 @@ class IFS(object):
         self._is_flat_1230 = False
         self._is_flat_1300 = False
         self._is_flat_1550 = False
+        self._is_wave_cal = False
+        self._is_specpos = False
 
         self._is_dark = False
         self._is_flat = False
@@ -166,6 +168,10 @@ class IFS(object):
             print ' '
             print ' '
             if not self._is_flat_1550: self._flat('1550')
+        if not self._is_wave_cal: self._specpos()
+        if not self._is_specpos: self._wave_cal()
+
+
 
         # if not self._is_flat: self._flat()
         # if self._corono:
@@ -515,6 +521,109 @@ class IFS(object):
                 self._error_msg('It seems a master_detector_' + suffix + '_drh.fits file was not produced. Check the log above')
         else:
             sys.exit()
+
+    # --------------------------------------------------------------
+    # Method for the wavelength calibration
+    # --------------------------------------------------------------
+    def _specpos(self):
+        """
+        Method for the wavelength calibration
+        """
+        # --------------------------------------------------------------
+        # First, identify the proper files
+        # --------------------------------------------------------------
+        fits_spec = self._find_fits('SPECPOS')
+        # --------------------------------------------------------------
+        # Write the SOF file
+        # --------------------------------------------------------------
+        f = open(self._dir_sof + '/specpos.sof', 'w')
+        for i in range(len(fits_spec)):
+            f.write(self._path_to_fits + '/' + fits_spec[i] + '\tIFS_SPECPOS_RAW\n')
+        f.write(self._dir_cosm + '/dark_cal.fits   IFS_MASTER_DARK\n')
+        f.close()
+        # --------------------------------------------------------------        
+        # Run the esorex pipeline
+        # --------------------------------------------------------------        
+        runit = raw_input('\nProceed [Y]/n: ')
+        if runit != 'n':
+            if self.obs_filter == 'OBS_YJ':
+                Hmode = 'FALSE'
+            else:
+                Hmode = 'TRUE'
+                print ' '
+                print ' '
+                print 'Check the mode !'
+                print ' '
+                print ' '
+                # Hmode should be TRUE only for OBS_YJH, but I need to be sure about the syntax of the mode
+                sys.exit()
+            args = ['esorex', 'sph_ifs_spectra_positions',
+                     '--ifs.spectra_positions.outfilename=' + self._dir_cosm + '/spectra_positions.fits',
+                     '--ifs.spectra_positions.hmode=' + Hmode,
+                    self._dir_sof + '/specpos.sof']
+            master = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
+            print '-'*80
+            # --------------------------------------------------------------
+            # Check if it actually produced something
+            # --------------------------------------------------------------
+            if not os.path.isfile(self._dir_cosm + '/spectra_positions.fits'):
+                self._error_msg('It seems a spectra_positions.fits file was not produced. Check the log above')
+        else:
+            sys.exit()
+
+    # --------------------------------------------------------------
+    # Method for the wavelength calibration
+    # --------------------------------------------------------------
+    def _wave_cal(self):
+        """
+        Method for the wavelength calibration
+        """
+        # --------------------------------------------------------------
+        # First, identify the proper files
+        # --------------------------------------------------------------
+        fits_wave = self._find_fits('WAVECAL')
+        # --------------------------------------------------------------
+        # Write the SOF file
+        # --------------------------------------------------------------
+        f = open(self._dir_sof + '/wave_cal.sof', 'w')
+        for i in range(len(fits_wave)):
+            f.write(self._path_to_fits + '/' + fits_wave[i] + '\tIFS_WAVECALIB_RAW\n')
+        f.write(self._dir_cosm + '/spectra_positions.fits   IFS_SPECPOS\n')
+        f.write(self._dir_cosm + '/dark_cal.fits   IFS_MASTER_DARK\n')
+        f.close()
+        # --------------------------------------------------------------        
+        # Run the esorex pipeline
+        # --------------------------------------------------------------        
+        runit = raw_input('\nProceed [Y]/n: ')
+        if runit != 'n':
+            if self.obs_filter == 'OBS_YJ':
+                args = ['esorex', 'sph_ifs_wave_calib',
+                        '--ifs.wave_calib.number_lines=3',
+                        '--ifs.wave_calib.outfilename=' + self._dir_cosm + '/wave_calib.fits',
+                        '--ifs.wave_calib.wavelength_line1=0.9877',
+                        '--ifs.wave_calib.wavelength_line2=1.1237',
+                        '--ifs.wave_calib.wavelength_line3=1.3094',
+                        self._dir_sof + '/wave_cal.sof']
+            else:
+                args = ['esorex', 'sph_ifs_wave_calib',
+                        '--ifs.wave_calib.number_lines=4',
+                        '--ifs.wave_calib.outfilename=' + self._dir_cosm + '/wave_calib.fits',
+                        '--ifs.wave_calib.wavelength_line1=0.9877',
+                        '--ifs.wave_calib.wavelength_line2=1.1237',
+                        '--ifs.wave_calib.wavelength_line3=1.3094',
+                        '--ifs.wave_calib.wavelength_line4=1.5451',
+                        self._dir_sof + '/wave_cal.sof']
+            master = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
+            print '-'*80
+            # --------------------------------------------------------------
+            # Check if it actually produced something
+            # --------------------------------------------------------------
+            if not os.path.isfile(self._dir_cosm + '/wave_calib.fits'):
+                self._error_msg('It seems a wave_calib.fits file was not produced. Check the log above')
+        else:
+            sys.exit()
+
+
 
     # --------------------------------------------------------------
     # Method to read the filter curves
@@ -1047,6 +1156,16 @@ class IFS(object):
             print 'Found a \"flat 1550\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
             self._is_flat_1550 = True
             print '-'*80
+        if os.path.isfile(self._dir_cosm + '/wave_calib.fits'):
+            print 'Found a \"wave cal\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
+            self._is_wave_cal = True
+            print '-'*80
+        if os.path.isfile(self._dir_cosm + '/spectra_positions.fits'):
+            print 'Found a \"spectra positions\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
+            self._is_specpos = True
+            print '-'*80
+
+
 
         if os.path.isfile(self._dir_cosm + '/irdis_flat.fits'):
             print 'Found a FLAT in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
@@ -1103,6 +1222,16 @@ class IFS(object):
                 filt = flat_filter + '_YJ'
             else:
                 self._error_msg('Update the find_fits method for that observing mode.')
+        # --------------------------------------------------------------
+        # For the SPECPOS measurements
+        # --------------------------------------------------------------
+        elif action == 'SPECPOS':
+            catg, arm, tp, dit, bl_txt = 'CALIB', 'IFS', 'SPECPOS,LAMP', False, 'specpos_blacklist'
+        # --------------------------------------------------------------
+        # For the WAVECAL measurements
+        # --------------------------------------------------------------
+        elif action == 'WAVECAL':
+            catg, arm, tp, dit, bl_txt = 'CALIB', 'IFS', 'WAVE,LAMP', False, 'wavecal_blacklist'
         # --------------------------------------------------------------
         # For the SKY measurements
         # --------------------------------------------------------------
