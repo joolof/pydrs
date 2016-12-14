@@ -5,6 +5,7 @@ import os.path
 import datetime
 import subprocess
 import numpy as np
+import ifs_scripts
 import scipy.ndimage
 from astropy.io import fits, ascii
 import matplotlib.pyplot as plt
@@ -145,11 +146,11 @@ class IFS(object):
         # --------------------------------------------------------------
         # Run the recipes that needs to be run
         # --------------------------------------------------------------
-        # if not self._is_dark_sky: self._dark_sky()
-        # if not self._is_dark_psf: self._master_dark()
+        if not self._is_dark_sky: self._dark_sky()
+        if not self._is_dark_psf: self._dark_psf()
         if not self._is_dark_cen: self._dark_center()
         if not self._is_dark_corono: self._dark_corono()
-
+        self._white_flat()
 
         # if not self._is_flat: self._flat()
         # if self._corono:
@@ -180,7 +181,7 @@ class IFS(object):
         # --------------------------------------------------------------
         # First, identify the proper files
         # --------------------------------------------------------------
-        fits_dark = self._find_fits('DARK_SKY', force_dit = 1.650726)
+        fits_dark = self._find_fits('DARK', force_dit = 1.650726)
         # --------------------------------------------------------------
         # Write the SOF file
         # --------------------------------------------------------------
@@ -215,7 +216,7 @@ class IFS(object):
     # --------------------------------------------------------------
     # Method for the master dark
     # --------------------------------------------------------------
-    def _master_dark(self):
+    def _dark_psf(self):
         """
         Method to create the master dark frame
         """
@@ -394,44 +395,58 @@ class IFS(object):
     # --------------------------------------------------------------        
     # Method for the flat
     # --------------------------------------------------------------        
-    def _flat(self):
+    def _white_flat(self):
         """
-        Method to produce the flat
+        Method to produce the white flat
         """
+        print 'This should be updated to the custom IDL routines.'
         # --------------------------------------------------------------        
         # First, identify the proper files
         # --------------------------------------------------------------        
-        fits_flat = self._find_fits('FLAT')
-        # fits_bck = self._find_fits('BACKGROUND')
+        fits_flat = self._find_fits('FLAT', flat_filter='CAL_BB_2')
+        if len(fits_flat) != 2:
+            self._error_msg('There should be two files for the white flat. Problem ...')
         # --------------------------------------------------------------        
         # Write the SOF file
         # --------------------------------------------------------------        
-        f = open(self._dir_sof + '/flat.sof', 'w')
+        sof_file = self._dir_sof + '/white_flat.sof'
+        f = open(sof_file, 'w')
         for i in range(len(fits_flat)):
-            f.write(self._path_to_fits + '/' + fits_flat[i] + '\tIRD_FLAT_FIELD_RAW\n')
-        # f.write(self._dir_cosm + '/master_dark.fits\tIRD_MASTER_DARK\n')
-        f.write(self._dir_cosm + '/static_badpixels.fits\tIRD_STATIC_BADPIXELMAP\n')
+            f.write(self._path_to_fits + '/' + fits_flat[i] + '\tIFS_DETECTOR_FLAT_FIELD_RAW\n')
+        f.write(self._dir_cosm + '/dark_bpm_cal.fits   IFS_STATIC_BADPIXELMAP\n')
+        f.write(self._dir_cosm + '/dark_bpm_cen.fits   IFS_STATIC_BADPIXELMAP\n')
+        f.write(self._dir_cosm + '/dark_bpm_cor.fits   IFS_STATIC_BADPIXELMAP\n')
         f.close()
+        # --------------------------------------------------------------        
+        # Run the manual script
+        # --------------------------------------------------------------        
+        ffname = self._dir_sof + '/master_detector_flat_white.fits'
+        bpname = self._dir_sof + '/dff_badpixelname_white.fits'
+        ifs_scripts.sph_ifs_detector_flat_manual(sof_file, ffname, bpname)
         # --------------------------------------------------------------        
         # Run the esorex pipeline
         # --------------------------------------------------------------        
-        runit = raw_input('\nProceed [Y]/n: ')
-        if runit != 'n':
-            args = ['esorex', 'sph_ird_instrument_flat',
-                    # '--ird.instrument_flat.threshold=0.9',
-                    '--ird.instrument_flat.save_addprod=TRUE',
-                    '--ird.instrument_flat.badpixfilename=' + self._dir_cosm + '/instr_flat_badpixels.fits',
-                    '--ird.instrument_flat.outfilename=' + self._dir_cosm + '/irdis_flat.fits',
-                    self._dir_sof + '/flat.sof']
-            doflat = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
-            print '-'*80
-            # --------------------------------------------------------------
-            # Check if it actually produced something
-            # --------------------------------------------------------------
-            if not os.path.isfile(self._dir_cosm + '/irdis_flat.fits'):
-                self._error_msg('It seems a irdis_flat.fits file was not produced. Check the log above')
-        else:
-            sys.exit()
+        # runit = raw_input('\nProceed [Y]/n: ')
+        # if runit != 'n':
+        #     args = ['esorex', 'sph_ifs_master_detector_flat',
+        #             '--ifs.master_detector_flat.save_addprod=TRUE',
+        #             '--ifs.master_detector_flat.outfilename=' + self._dir_cosm + '/master_detector_flat_white_drh.fits',
+        #             '--ifs.master_detector_flat.lss_outfilename=' + self._dir_cosm + '/large_scale_flat_white_drh.fits',
+        #             '--ifs.master_detector_flat.preamp_outfilename=' + self._dir_cosm + '/preamp_flat_white_drh.fits',
+        #             '--ifs.master_detector_flat.badpixfilename=' + self._dir_cosm + '/dff_badpixelname_white_drh.fits',
+        #             '--ifs.master_detector_flat.lambda=-1.0',
+        #             '--ifs.master_detector_flat.smoothing_length=10.0',
+        #             '--ifs.master_detector_flat.smoothing_method=1',
+        #             self._dir_sof + '/white_flat.sof']
+        #     doflat = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
+        #     print '-'*80
+        #     # --------------------------------------------------------------
+        #     # Check if it actually produced something
+        #     # --------------------------------------------------------------
+        #     if not os.path.isfile(self._dir_cosm + '/master_detector_flat_white_drh.fits'):
+        #         self._error_msg('It seems a master_detector_flat_white_drh.fits file was not produced. Check the log above')
+        # else:
+        #     sys.exit()
 
     # --------------------------------------------------------------
     # Method to read the filter curves
@@ -976,24 +991,31 @@ class IFS(object):
     # --------------------------------------------------------------
     # Method to make a summary of what can be done.
     # --------------------------------------------------------------
-    def _find_fits(self, action, blacklist = True, verbose = True, force_dit = None):
+    def _find_fits(self, action, blacklist = True, verbose = True, force_dit = None, flat_filter = None):
         """
         Method to identify what can be done (dark, flat, distortion, star center)
         """
         # --------------------------------------------------------------
-        # For the DARK SKY measurements
-        # --------------------------------------------------------------
-        if action == 'DARK_SKY':
-            catg, arm, tp, dit, bl_txt = 'CALIB', 'IFS', 'DARK', True, 'dark_sky_blacklist'
-            if force_dit is None:
-                self._error_msg('You should provide a value for force_dit for the dark sky reduction')
-        # --------------------------------------------------------------
         # For the DARK measurements
         # --------------------------------------------------------------
-        elif action == 'DARK':
+        if action == 'DARK':
             catg, arm, tp, dit, bl_txt = 'CALIB', 'IFS', 'DARK', False, 'dark_blacklist'
             if force_dit is None:
                 self._error_msg('You should provide a value for force_dit for the dark reduction')
+        # --------------------------------------------------------------
+        # For the FLAT measurements
+        # --------------------------------------------------------------
+        elif action == 'FLAT':
+            if flat_filter is None:
+                self._error_msg('You should provide a value for flat_filter for the flat reduction')
+            else:
+                if type(flat_filter) is not str:
+                    self._error_msg('The flat_filter should be a string (find_fits method).')
+            catg, arm, tp, dit, bl_txt = 'CALIB', 'IFS', 'FLAT,LAMP', False, 'flat_blacklist'
+            if self.obs_filter == 'OBS_YJ':
+                filt = flat_filter + '_YJ'
+            else:
+                self._error_msg('Update the find_fits method for that observing mode.')
         # --------------------------------------------------------------
         # For the SKY measurements
         # --------------------------------------------------------------
@@ -1004,11 +1026,6 @@ class IFS(object):
         # --------------------------------------------------------------
         elif action == 'BACKGROUND':
             catg, arm, tp, dit, bl_txt = 'CALIB', 'IFS', 'DARK,BACKGROUND', False, 'bkg_blacklist'
-        # --------------------------------------------------------------
-        # For the FLAT measurements
-        # --------------------------------------------------------------
-        elif action == 'FLAT':
-            catg, arm, tp, dit, bl_txt = 'CALIB', 'IFS', 'FLAT,LAMP', False, 'flat_blacklist'
         # --------------------------------------------------------------
         # For the CENTER measurements
         # --------------------------------------------------------------
@@ -1027,8 +1044,10 @@ class IFS(object):
         # --------------------------------------------------------------
         # Make the selection. For the FLAT and DISTORTION, the DIT is irrelevant. For the DARK, the filter seems to be irrelevant also.
         # --------------------------------------------------------------
-        if ((action == 'DARK_SKY') | (action == 'DARK')):
+        if (action == 'DARK'):
             sel = np.where((self._catg == catg) & (self._arm == arm) & (self._type == tp) & (self._dit == force_dit))[0]
+        elif (action == 'FLAT'):
+                sel = np.where((self._catg == catg) & (self._filter == filt) & (self._arm == arm) & (self._type == tp))[0]
         else:
             if dit:
                 sel = np.where((self._catg == catg) & (self._filter == self.obs_filter) & (self._arm == arm) & (self._type == tp) & (self._dit == self.obs_dit))[0]
