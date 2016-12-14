@@ -5,7 +5,7 @@ import os.path
 import datetime
 import subprocess
 import numpy as np
-import ifs_scripts
+# from .extras import ifs_scripts
 import scipy.ndimage
 from astropy.io import fits, ascii
 import matplotlib.pyplot as plt
@@ -82,6 +82,7 @@ class IFS(object):
         self._is_dark_psf = False
         self._is_dark_cen = False
         self._is_dark_corono = False
+        self._is_flat_white = False
 
         self._is_dark = False
         self._is_flat = False
@@ -150,7 +151,7 @@ class IFS(object):
         if not self._is_dark_psf: self._dark_psf()
         if not self._is_dark_cen: self._dark_center()
         if not self._is_dark_corono: self._dark_corono()
-        self._white_flat()
+        if not self._is_flat_white: self._white_flat()
 
         # if not self._is_flat: self._flat()
         # if self._corono:
@@ -391,6 +392,30 @@ class IFS(object):
         else:
             sys.exit()
 
+    # --------------------------------------------------------------        
+    # Check the header of a fits file for the proper keyword
+    # --------------------------------------------------------------        
+    def _check_lamp(self, fitsfile):
+        """
+        Check the header for proper keywords to identify which lamp was used
+        """
+        hdu = fits.open(self._path_to_fits + '/' + fitsfile)
+        hdr = hdu[0].header
+        hdu.close()
+        idlamp = None
+        if 'ESO INS2 LAMP1 ST' in hdr.keys():
+            idlamp = 'l1'
+        if 'ESO INS2 LAMP2 ST' in hdr.keys():
+            idlamp = 'l2'
+        if 'ESO INS2 LAMP3 ST' in hdr.keys():
+            idlamp = 'l3'
+        if 'ESO INS2 LAMP4 ST' in hdr.keys():
+            idlamp = 'l4'
+        if 'ESO INS2 LAMP5 ST' in hdr.keys():
+            idlamp = 'l5'
+        if idlamp is None:
+            self._error_msg('Could not dientify the lamp used for the flat.')
+        return idlamp
 
     # --------------------------------------------------------------        
     # Method for the flat
@@ -399,13 +424,19 @@ class IFS(object):
         """
         Method to produce the white flat
         """
+        print ' '
         print 'This should be updated to the custom IDL routines.'
+        print ' '
         # --------------------------------------------------------------        
         # First, identify the proper files
         # --------------------------------------------------------------        
         fits_flat = self._find_fits('FLAT', flat_filter='CAL_BB_2')
         if len(fits_flat) != 2:
             self._error_msg('There should be two files for the white flat. Problem ...')
+        else:
+            suffix_lamp = self._check_lamp(fits_flat[0])
+            if suffix_lamp != self._check_lamp(fits_flat[1]):
+                self._error_msg('The flats were taken with different lamps.')
         # --------------------------------------------------------------        
         # Write the SOF file
         # --------------------------------------------------------------        
@@ -419,34 +450,43 @@ class IFS(object):
         f.close()
         # --------------------------------------------------------------        
         # Run the manual script
+        # To be checked later on
         # --------------------------------------------------------------        
-        ffname = self._dir_sof + '/master_detector_flat_white.fits'
-        bpname = self._dir_sof + '/dff_badpixelname_white.fits'
-        ifs_scripts.sph_ifs_detector_flat_manual(sof_file, ffname, bpname)
+        # ffname = self._dir_sof + '/master_detector_flat_white'
+        # bpname = self._dir_sof + '/dff_badpixelname_white'
+        # self.flatw = ifs_scripts.sph_ifs_detector_flat_manual(sof_file, ffname, bpname)
         # --------------------------------------------------------------        
         # Run the esorex pipeline
         # --------------------------------------------------------------        
-        # runit = raw_input('\nProceed [Y]/n: ')
-        # if runit != 'n':
-        #     args = ['esorex', 'sph_ifs_master_detector_flat',
-        #             '--ifs.master_detector_flat.save_addprod=TRUE',
-        #             '--ifs.master_detector_flat.outfilename=' + self._dir_cosm + '/master_detector_flat_white_drh.fits',
-        #             '--ifs.master_detector_flat.lss_outfilename=' + self._dir_cosm + '/large_scale_flat_white_drh.fits',
-        #             '--ifs.master_detector_flat.preamp_outfilename=' + self._dir_cosm + '/preamp_flat_white_drh.fits',
-        #             '--ifs.master_detector_flat.badpixfilename=' + self._dir_cosm + '/dff_badpixelname_white_drh.fits',
-        #             '--ifs.master_detector_flat.lambda=-1.0',
-        #             '--ifs.master_detector_flat.smoothing_length=10.0',
-        #             '--ifs.master_detector_flat.smoothing_method=1',
-        #             self._dir_sof + '/white_flat.sof']
-        #     doflat = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
-        #     print '-'*80
-        #     # --------------------------------------------------------------
-        #     # Check if it actually produced something
-        #     # --------------------------------------------------------------
-        #     if not os.path.isfile(self._dir_cosm + '/master_detector_flat_white_drh.fits'):
-        #         self._error_msg('It seems a master_detector_flat_white_drh.fits file was not produced. Check the log above')
-        # else:
-        #     sys.exit()
+        runit = raw_input('\nProceed [Y]/n: ')
+        if runit != 'n':
+            args = ['esorex', 'sph_ifs_master_detector_flat',
+                    '--ifs.master_detector_flat.save_addprod=TRUE',
+                    '--ifs.master_detector_flat.outfilename=' + self._dir_cosm + '/master_detector_flat_white_drh.fits',
+                    '--ifs.master_detector_flat.lss_outfilename=' + self._dir_cosm + '/large_scale_flat_white_drh.fits',
+                    '--ifs.master_detector_flat.preamp_outfilename=' + self._dir_cosm +   '/preamp_flat_white_drh.fits',
+                    '--ifs.master_detector_flat.badpixfilename=' + self._dir_cosm +  '/dff_badpixelname_white_drh.fits',
+                    '--ifs.master_detector_flat.lambda=-1.0',
+                    '--ifs.master_detector_flat.smoothing_length=10.0',
+                    '--ifs.master_detector_flat.smoothing_method=1',
+                    self._dir_sof + '/white_flat.sof']
+            doflat = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
+            print '-'*80
+            # --------------------------------------------------------------
+            # Rename the fits files
+            # --------------------------------------------------------------
+            flat_list = glob.glob(self._dir_cosm + '/*white*_' + suffix_lamp + '.fits')
+            for i in range(len(flat_list)):
+                tmp_name = flat_list[i]
+                args = ['mv', tmp_name, tmp_name.replace('_l5', '')]
+                mvfits = subprocess.Popen(args).wait()
+            # --------------------------------------------------------------
+            # Check if it actually produced something
+            # --------------------------------------------------------------
+            if not os.path.isfile(self._dir_cosm + '/master_detector_flat_white_drh.fits'):
+                self._error_msg('It seems a master_detector_flat_white_drh.fits file was not produced. Check the log above')
+        else:
+            sys.exit()
 
     # --------------------------------------------------------------
     # Method to read the filter curves
@@ -958,6 +998,10 @@ class IFS(object):
         if os.path.isfile(self._dir_cosm + '/dark_cor.fits'):
             print 'Found a \"dark corono\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
             self._is_dark_corono = True
+            print '-'*80
+        if os.path.isfile(self._dir_cosm + '/master_detector_flat_white_drh.fits'):
+            print 'Found a \"white flat\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
+            self._is_flat_white = True
             print '-'*80
 
 
