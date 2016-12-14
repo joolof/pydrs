@@ -83,6 +83,10 @@ class IFS(object):
         self._is_dark_cen = False
         self._is_dark_corono = False
         self._is_flat_white = False
+        self._is_flat_1020 = False
+        self._is_flat_1230 = False
+        self._is_flat_1300 = False
+        self._is_flat_1550 = False
 
         self._is_dark = False
         self._is_flat = False
@@ -151,7 +155,17 @@ class IFS(object):
         if not self._is_dark_psf: self._dark_psf()
         if not self._is_dark_cen: self._dark_center()
         if not self._is_dark_corono: self._dark_corono()
-        if not self._is_flat_white: self._white_flat()
+        if not self._is_flat_white: self._flat('white')
+        if not self._is_flat_1020: self._flat('1020')
+        if not self._is_flat_1230: self._flat('1230')
+        if not self._is_flat_1300: self._flat('1300')
+        if self.obs_filter != 'OBS_YJ':
+            print ' '
+            print ' '
+            print 'To be checked more thorougly'
+            print ' '
+            print ' '
+            if not self._is_flat_1550: self._flat('1550')
 
         # if not self._is_flat: self._flat()
         # if self._corono:
@@ -420,17 +434,31 @@ class IFS(object):
     # --------------------------------------------------------------        
     # Method for the flat
     # --------------------------------------------------------------        
-    def _white_flat(self):
+    def _flat(self, flatname):
         """
         Method to produce the white flat
         """
         print ' '
         print 'This should be updated to the custom IDL routines.'
         print ' '
+        if type(flatname) is not str: 
+            self._error_msg('The \"flatname\" should be a string.')
+        if flatname == 'white':
+            flat_filter, suffix, wave = 'CAL_BB_2', 'flat_white', -1.0
+        elif flatname == '1020':
+            flat_filter, suffix, wave = 'CAL_NB1_1', 'flat_1020', 1.020
+        elif flatname == '1230':
+            flat_filter, suffix, wave = 'CAL_NB2_1', 'flat_1230', 1.230
+        elif flatname == '1300':
+            flat_filter, suffix, wave = 'CAL_NB3_1', 'flat_1300', 1.300
+        elif flatname == '1550':
+            flat_filter, suffix, wave = 'CAL_NB4_1', 'flat_1550', 1.550
+        else:
+            self._error_msg('Weird flatname ...')
         # --------------------------------------------------------------        
         # First, identify the proper files
         # --------------------------------------------------------------        
-        fits_flat = self._find_fits('FLAT', flat_filter='CAL_BB_2')
+        fits_flat = self._find_fits('FLAT', flat_filter = flat_filter)
         if len(fits_flat) != 2:
             self._error_msg('There should be two files for the white flat. Problem ...')
         else:
@@ -440,7 +468,7 @@ class IFS(object):
         # --------------------------------------------------------------        
         # Write the SOF file
         # --------------------------------------------------------------        
-        sof_file = self._dir_sof + '/white_flat.sof'
+        sof_file = self._dir_sof + '/' + suffix  +'.sof'
         f = open(sof_file, 'w')
         for i in range(len(fits_flat)):
             f.write(self._path_to_fits + '/' + fits_flat[i] + '\tIFS_DETECTOR_FLAT_FIELD_RAW\n')
@@ -462,29 +490,29 @@ class IFS(object):
         if runit != 'n':
             args = ['esorex', 'sph_ifs_master_detector_flat',
                     '--ifs.master_detector_flat.save_addprod=TRUE',
-                    '--ifs.master_detector_flat.outfilename=' + self._dir_cosm + '/master_detector_flat_white_drh.fits',
-                    '--ifs.master_detector_flat.lss_outfilename=' + self._dir_cosm + '/large_scale_flat_white_drh.fits',
-                    '--ifs.master_detector_flat.preamp_outfilename=' + self._dir_cosm +   '/preamp_flat_white_drh.fits',
-                    '--ifs.master_detector_flat.badpixfilename=' + self._dir_cosm +  '/dff_badpixelname_white_drh.fits',
-                    '--ifs.master_detector_flat.lambda=-1.0',
+                    '--ifs.master_detector_flat.outfilename=' + self._dir_cosm + '/master_detector_' + suffix + '_drh.fits',
+                    '--ifs.master_detector_flat.lss_outfilename=' + self._dir_cosm + '/large_scale_' + suffix + '_drh.fits',
+                    '--ifs.master_detector_flat.preamp_outfilename=' + self._dir_cosm +   '/preamp_' + suffix + '_drh.fits',
+                    '--ifs.master_detector_flat.badpixfilename=' + self._dir_cosm + '/dff_badpixelname_' + suffix + '_drh.fits',
+                    '--ifs.master_detector_flat.lambda=' + str(wave),
                     '--ifs.master_detector_flat.smoothing_length=10.0',
                     '--ifs.master_detector_flat.smoothing_method=1',
-                    self._dir_sof + '/white_flat.sof']
+                    self._dir_sof + '/' + suffix + '.sof']
             doflat = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
             print '-'*80
             # --------------------------------------------------------------
             # Rename the fits files
             # --------------------------------------------------------------
-            flat_list = glob.glob(self._dir_cosm + '/*white*_' + suffix_lamp + '.fits')
+            flat_list = glob.glob(self._dir_cosm + '/*' + suffix_lamp + '.fits')
             for i in range(len(flat_list)):
                 tmp_name = flat_list[i]
-                args = ['mv', tmp_name, tmp_name.replace('_l5', '')]
+                args = ['mv', tmp_name, tmp_name.replace('_'+suffix_lamp, '')]
                 mvfits = subprocess.Popen(args).wait()
             # --------------------------------------------------------------
             # Check if it actually produced something
             # --------------------------------------------------------------
-            if not os.path.isfile(self._dir_cosm + '/master_detector_flat_white_drh.fits'):
-                self._error_msg('It seems a master_detector_flat_white_drh.fits file was not produced. Check the log above')
+            if not os.path.isfile(self._dir_cosm + '/master_detector_' + suffix + '_drh.fits'):
+                self._error_msg('It seems a master_detector_' + suffix + '_drh.fits file was not produced. Check the log above')
         else:
             sys.exit()
 
@@ -1000,10 +1028,25 @@ class IFS(object):
             self._is_dark_corono = True
             print '-'*80
         if os.path.isfile(self._dir_cosm + '/master_detector_flat_white_drh.fits'):
-            print 'Found a \"white flat\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
+            print 'Found a \"flat white\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
             self._is_flat_white = True
             print '-'*80
-
+        if os.path.isfile(self._dir_cosm + '/master_detector_flat_1020_drh.fits'):
+            print 'Found a \"flat 1020\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
+            self._is_flat_1020 = True
+            print '-'*80
+        if os.path.isfile(self._dir_cosm + '/master_detector_flat_1230_drh.fits'):
+            print 'Found a \"flat 1230\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
+            self._is_flat_1230 = True
+            print '-'*80
+        if os.path.isfile(self._dir_cosm + '/master_detector_flat_1300_drh.fits'):
+            print 'Found a \"flat 1300\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
+            self._is_flat_1300 = True
+            print '-'*80
+        if os.path.isfile(self._dir_cosm + '/master_detector_flat_1550_drh.fits'):
+            print 'Found a \"flat 1550\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
+            self._is_flat_1550 = True
+            print '-'*80
 
         if os.path.isfile(self._dir_cosm + '/irdis_flat.fits'):
             print 'Found a FLAT in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
