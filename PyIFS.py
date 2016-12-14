@@ -89,6 +89,7 @@ class IFS(object):
         self._is_flat_1550 = False
         self._is_wave_cal = False
         self._is_specpos = False
+        self._is_ifuflat = False
 
         self._is_dark = False
         self._is_flat = False
@@ -151,7 +152,7 @@ class IFS(object):
         # --------------------------------------------------------------
         self._check_prod()
         # --------------------------------------------------------------
-        # Run the recipes that needs to be run
+        # Run the cascade
         # --------------------------------------------------------------
         if not self._is_dark_sky: self._dark_sky()
         if not self._is_dark_psf: self._dark_psf()
@@ -170,7 +171,7 @@ class IFS(object):
             if not self._is_flat_1550: self._flat('1550')
         if not self._is_wave_cal: self._specpos()
         if not self._is_specpos: self._wave_cal()
-
+        if not self._is_ifuflat: self._ifu_flat()
 
 
         # if not self._is_flat: self._flat()
@@ -620,6 +621,60 @@ class IFS(object):
             # --------------------------------------------------------------
             if not os.path.isfile(self._dir_cosm + '/wave_calib.fits'):
                 self._error_msg('It seems a wave_calib.fits file was not produced. Check the log above')
+        else:
+            sys.exit()
+
+
+    # --------------------------------------------------------------
+    # Method for the IFU flat
+    # --------------------------------------------------------------
+    def _ifu_flat(self):
+        """
+        Method for the wavelength calibration
+        """
+        # --------------------------------------------------------------
+        # First, identify the proper files
+        # --------------------------------------------------------------
+        fits_ifu = self._find_fits('IFUFLAT')
+        # --------------------------------------------------------------
+        # Write the SOF file
+        # --------------------------------------------------------------
+        f = open(self._dir_sof + '/ifu_flat.sof', 'w')
+        for i in range(len(fits_ifu)):
+            f.write(self._path_to_fits + '/' + fits_ifu[i] + '\t IFS_FLAT_FIELD_RAW\n')
+        f.write(self._dir_cosm + '/wave_calib.fits                     IFS_WAVECALIB\n')
+        f.write(self._dir_cosm + '/master_detector_flat_1020_drh.fits      IFS_MASTER_DFF_LONG1\n')
+        f.write(self._dir_cosm + '/master_detector_flat_1230_drh.fits      IFS_MASTER_DFF_LONG2\n')
+        f.write(self._dir_cosm + '/master_detector_flat_1300_drh.fits      IFS_MASTER_DFF_LONG3\n')
+        if self.obs_filter != 'OBS_YJ':
+            # Int he original script, it was:
+            # if [ ${MODE} = 'YJH' ]; then
+            # fi
+            print ' '
+            print 'Check the observing mode in ifu_flat !!!'
+            print ' '
+            sys.exit()
+            f.write(self._dir_cosm + '/master_detector_flat_1550_drh.fits      IFS_MASTER_DFF_LONG4\n')
+        f.write(self._dir_cosm + '/master_detector_flat_white_drh.fits     IFS_MASTER_DFF_LONGB\n')
+        f.write(self._dir_cosm + '/master_detector_flat_white_drh.fits     IFS_MASTER_DFF_SHORT\n')
+        f.write(self._dir_cosm + '/dark_cal.fits                       IFS_MASTER_DARK\n')
+        f.close()
+        # --------------------------------------------------------------        
+        # Run the esorex pipeline
+        # --------------------------------------------------------------        
+        runit = raw_input('\nProceed [Y]/n: ')
+        if runit != 'n':
+            args = ['esorex', 'sph_ifs_instrument_flat',
+                    '--ifs.instrument_flat.ifu_filename=' + self._dir_cosm + '/ifu_flat.fits',
+                    '--ifs.instrument_flat.nofit=TRUE',
+                    self._dir_sof + '/ifu_flat.sof']
+            master = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
+            print '-'*80
+            # --------------------------------------------------------------
+            # Check if it actually produced something
+            # --------------------------------------------------------------
+            if not os.path.isfile(self._dir_cosm + '/ifu_flat.fits'):
+                self._error_msg('It seems a ifu_flat.fits file was not produced. Check the log above')
         else:
             sys.exit()
 
@@ -1164,6 +1219,10 @@ class IFS(object):
             print 'Found a \"spectra positions\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
             self._is_specpos = True
             print '-'*80
+        if os.path.isfile(self._dir_cosm + '/ifu_flat.fits'):
+            print 'Found a \"IFU flat\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
+            self._is_ifuflat = True
+            print '-'*80
 
 
 
@@ -1232,6 +1291,11 @@ class IFS(object):
         # --------------------------------------------------------------
         elif action == 'WAVECAL':
             catg, arm, tp, dit, bl_txt = 'CALIB', 'IFS', 'WAVE,LAMP', False, 'wavecal_blacklist'
+        # --------------------------------------------------------------
+        # For the IFUFLAT measurements
+        # --------------------------------------------------------------
+        elif action == 'IFUFLAT':
+            catg, arm, tp, dit, bl_txt = 'CALIB', 'IFS', 'FLAT,LAMP', False, 'ifu_flat_blacklist'
         # --------------------------------------------------------------
         # For the SKY measurements
         # --------------------------------------------------------------
