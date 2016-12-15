@@ -658,9 +658,9 @@ class IFS(object):
         for i in range(len(fits_ifu)):
             f.write(self._path_to_fits + '/' + fits_ifu[i] + '\t IFS_FLAT_FIELD_RAW\n')
         f.write(self._dir_cosm + '/wave_calib.fits                     IFS_WAVECALIB\n')
-        f.write(self._dir_cosm + '/master_detector_flat_1020_drh.fits      IFS_MASTER_DFF_LONG1\n')
-        f.write(self._dir_cosm + '/master_detector_flat_1230_drh.fits      IFS_MASTER_DFF_LONG2\n')
-        f.write(self._dir_cosm + '/master_detector_flat_1300_drh.fits      IFS_MASTER_DFF_LONG3\n')
+        f.write(self._dir_cosm + '/master_detector_flat_1020.fits      IFS_MASTER_DFF_LONG1\n')
+        f.write(self._dir_cosm + '/master_detector_flat_1230.fits      IFS_MASTER_DFF_LONG2\n')
+        f.write(self._dir_cosm + '/master_detector_flat_1300.fits      IFS_MASTER_DFF_LONG3\n')
         if self.obs_filter != 'OBS_YJ':
             # Int he original script, it was:
             # if [ ${MODE} = 'YJH' ]; then
@@ -669,9 +669,9 @@ class IFS(object):
             print 'Check the observing mode in ifu_flat !!!'
             print ' '
             sys.exit()
-            f.write(self._dir_cosm + '/master_detector_flat_1550_drh.fits      IFS_MASTER_DFF_LONG4\n')
-        f.write(self._dir_cosm + '/master_detector_flat_white_drh.fits     IFS_MASTER_DFF_LONGB\n')
-        f.write(self._dir_cosm + '/master_detector_flat_white_drh.fits     IFS_MASTER_DFF_SHORT\n')
+            f.write(self._dir_cosm + '/master_detector_flat_1550.fits      IFS_MASTER_DFF_LONG4\n')
+        f.write(self._dir_cosm + '/master_detector_flat_white.fits     IFS_MASTER_DFF_LONGB\n')
+        f.write(self._dir_cosm + '/master_detector_flat_white.fits     IFS_MASTER_DFF_SHORT\n')
         f.write(self._dir_cosm + '/dark_cal.fits                       IFS_MASTER_DARK\n')
         f.close()
         # --------------------------------------------------------------        

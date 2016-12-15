@@ -234,24 +234,17 @@ def sph_ifs_preprocess(sof_file, coll = False, bkgsub = False, bpcor = False, xt
             bpcor = False
     # --------------------------------------------------------------        
     # Make a dictionary that will be useful somehow
+    # Will have a look at it later to see how useful that is
     # --------------------------------------------------------------        
-    nframes = 0
-    for i in range(nff):
-        hdr = fits.getheader(raw_file[i])
-        if 'NAXIS3' in hdr.keys():
-            ndit = hdr['NAXIS3']
-        else:
-            ndit = 1
-        nframes += 1
-    frames = {}
-    frames['file'] = []
-    frames['dit'] = np.zeros(nframes)
-    frames[''] = 
-    frames[''] = 
-    frames[''] = 
-    frames[''] = 
-    frames[''] = 
-    frames[''] = 
-
-
-# d['filename'] = []
+    # nframes = 0
+    # for i in range(nff):
+    #     hdr = fits.getheader(raw_file[i])
+    #     if 'NAXIS3' in hdr.keys():
+    #         ndit = hdr['NAXIS3']
+    #     else:
+    #         ndit = 1
+    #     nframes += 1
+    # frames = {}
+    # frames['file'] = []
+    # frames['dit'] = np.zeros(nframes)
+    # --------------------------------------------------------------        
