@@ -1,7 +1,10 @@
 import sys
 import clip_sigma
 import numpy as np
+import astropy.units as u
 from astropy.io import fits
+from astropy.time import Time
+import astropy.coordinates as coord
 from scipy.ndimage import binary_dilation, binary_erosion
 # --------------------------------------------------------------        
 # To print some error messages and exit smoothly
@@ -156,7 +159,7 @@ def sph_ifs_detector_flat_manual(sof_file, ffname, bpname):
 # --------------------------------------------------------------        
 # Custom routine, adapted from an IDL script written by A. Vigan
 # --------------------------------------------------------------        
-def sph_ifs_preprocess(sof_file, coll = False, bkgsub = False, bpcor = False, xtalk = False, colltyp = 'MEAN', collval = 0.5, colltol = 0.05):
+def sph_ifs_preprocess(sof_file, coll = False, bkgsub = True, bpcor = True, xtalk = False, colltyp = 'mean', collval = 0.5, colltol = 0.05):
     """
     From Arthur Vigan's IDL script. All credits go to him.
     Paper to be cited:
@@ -179,6 +182,8 @@ def sph_ifs_preprocess(sof_file, coll = False, bkgsub = False, bpcor = False, xt
     if type(xtalk) is not bool: error_msg('xtalk should be a boolean.') 
     if collval <=0: error_msg('collval should be >0')
     if colltol <=0: error_msg('colltol should be >0')
+    if ((colltyp != 'mean') & (colltyp != 'angle') & (colltyp != 'coadd')):
+        error_msg('colltyp should be either \"mean\", \"angle\", or \"coadd".')
     # --------------------------------------------------------------        
     # Read the SOF file (it sould definitely exists, I just created it)
     # --------------------------------------------------------------        
@@ -248,3 +253,116 @@ def sph_ifs_preprocess(sof_file, coll = False, bkgsub = False, bpcor = False, xt
     # frames['file'] = []
     # frames['dit'] = np.zeros(nframes)
     # --------------------------------------------------------------        
+    # Doing the pre-processing, here we go
+    # --------------------------------------------------------------        
+    print '\tPre-processing ...'
+    for i in range(nff):
+        print '\t\tFile ' + str(i+1) + ' of ' + str(nff) + ' ...'
+        # --------------------------------------------------------------        
+        # Read the data
+        # --------------------------------------------------------------        
+        hdu = fits.open(raw_file[i])
+        hdr = hdu[0].header
+        img = hdu[0].data
+        hdu.close()
+        # --------------------------------------------------------------        
+        # Get relevant info from the header
+        # --------------------------------------------------------------
+        ndit, pa_beg, pa_mid, pa_end = header_info(hdr)
+
+        # --------------------------------------------------------------        
+        # Apply the background subtraction
+        # --------------------------------------------------------------        
+        if bkgsub:
+            print '\t\tApplying the background correction ...'
+            if ndit > 1:
+                for i in range(ndit):
+                    frame = img[i,].copy()
+                    frame -= bkg
+                    img[i,] = frame
+            else:
+                img -= bkg
+        # --------------------------------------------------------------        
+        # Collapse or bin the data
+        # --------------------------------------------------------------        
+        if coll:
+            if colltyp == 'mean':
+                print '\t\tCollapse algorithm: mean'
+                if ndit > 1:
+                    img = np.mean(img, axis = 0)
+                    idx = np.shape(img)[0] - 1
+                else:
+                    idx = 0
+
+
+
+
+# --------------------------------------------------------------        
+# Get relevant info from the header
+# --------------------------------------------------------------
+def header_info(hdr):
+    """
+    Get the relevant info from the header
+    """
+    # Get the longitude for the parallactic angle
+    geolon = hdr['ESO TEL GEOLON']
+    geolat = hdr['ESO TEL GEOLAT']
+    # Get the DIT and NDIT
+    dit  = hdr['ESO DET SEQ1 DIT']
+    if 'NAXIS3' in hdr.keys():
+        ndit = hdr['NAXIS3']
+    else:
+        ndit = 1
+    # Get the RA and DEC during the observations
+    ra_drot  = hdr['ESO INS4 DROT1 RA']
+    dec_drot = hdr['ESO INS4 DROT1 DEC']
+
+    ra0 = np.int(ra_drot/10000.)
+    ra1 = np.int((ra_drot - ra0 * 10000.) / 100)
+    ra2 = ra_drot - ra0 * 10000. - ra1 * 100.
+    ra = coord.Angle(str(ra0) + 'h' + str(ra1) + 'm' + str(ra2)+'s').value
+
+    dec0 = np.int(dec_drot / 10000.)
+    dec1 = np.int((dec_drot - dec0 * 10000.) / 100)
+    dec2 = dec_drot - dec0 * 10000. - dec1 * 100.
+    dec = coord.Angle(str(dec0) + 'd' + str(np.abs(dec1)) + 'm' + str(np.abs(dec2))+'s').value
+
+    tobs = Time([hdr['DATE-OBS'], hdr['ESO DET FRAM UTC']])
+    jul_in = tobs.jd[0]
+    jul_out = tobs.jd[1]
+    delta = (jul_out - jul_in) / (ndit * 1.)
+
+    pa_beg = np.zeros(ndit)
+    pa_mid = np.zeros(ndit)
+    pa_end = np.zeros(ndit)
+
+    for i in range(ndit):
+        # Time for each DIT
+        time_beg = jul_in + delta * i
+        time_mid = jul_in + delta * i + (dit / 24.e0 / 3600.e0 / 2.e0)
+        time_end = jul_in + delta * i + (dit / 24.e0 / 3600.e0)
+
+        lst_b = Time(time_beg, format='jd', location = (geolon, geolat)).sidereal_time('mean').value
+        lst_m = Time(time_mid, format='jd', location = (geolon, geolat)).sidereal_time('mean').value
+        lst_e = Time(time_end, format='jd', location = (geolon, geolat)).sidereal_time('mean').value
+
+        pa_beg[i] = parangle(lst_b - ra, dec, geolat)
+        pa_med[i] = parangle(lst_m - ra, dec, geolat)
+        pa_end[i] = parangle(lst_e - ra, dec, geolat)
+
+    return ndit, pa_beg, pa_mid, pa_end
+
+
+
+# --------------------------------------------------------------        
+# Method to compute the parralactic angle
+# --------------------------------------------------------------        
+def parangle(ha, dec, latitude):
+    """
+    HA is in hours decimal, dec in degrees and latitude in degrees
+    """
+    r2d = 180.e0 / np.pi
+    d2r = np.pi/180.e0
+    had = ha * 15.e0
+    para = -r2d * np.arctan2(-np.sin(d2r*had), np.cos(d2r*dec)*np.tan(d2r*latitude)-np.sin(d2r*dec)*np.cos(d2r*had))
+    return para
