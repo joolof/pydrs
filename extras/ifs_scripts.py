@@ -256,12 +256,12 @@ def sph_ifs_preprocess(sof_file, coll = False, bkgsub = True, bpcor = True, xtal
     # Doing the pre-processing, here we go
     # --------------------------------------------------------------        
     print '\tPre-processing ...'
-    for i in range(nff):
-        print '\t\tFile ' + str(i+1) + ' of ' + str(nff) + ' ...'
+    for j in range(nff):
+        print '\t\tFile ' + str(j+1) + ' of ' + str(nff) + ' ...'
         # --------------------------------------------------------------        
         # Read the data
         # --------------------------------------------------------------        
-        hdu = fits.open(raw_file[i])
+        hdu = fits.open(raw_file[j])
         hdr = hdu[0].header
         img = hdu[0].data
         hdu.close()
@@ -269,7 +269,6 @@ def sph_ifs_preprocess(sof_file, coll = False, bkgsub = True, bpcor = True, xtal
         # Get relevant info from the header
         # --------------------------------------------------------------
         ndit, pa_beg, pa_mid, pa_end = header_info(hdr)
-
         # --------------------------------------------------------------        
         # Apply the background subtraction
         # --------------------------------------------------------------        
@@ -290,9 +289,22 @@ def sph_ifs_preprocess(sof_file, coll = False, bkgsub = True, bpcor = True, xtal
                 print '\t\tCollapse algorithm: mean'
                 if ndit > 1:
                     img = np.mean(img, axis = 0)
-                    idx = np.shape(img)[0] - 1
+                    idx = ndit - 1
                 else:
                     idx = 0
+
+                # if pa_beg[0]/pa_end[idx] < 0.:
+                #     if pa_beg[0] > pa_end[idx]:
+                        
+
+           # ;; ensures that pa values have the same sign
+           # if ((subframes[0].pa_start/subframes[idx].pa_end) lt 0) then begin
+           #    if (subframes[0].pa_start gt subframes[idx].pa_end) then begin
+           #       subframes[idx].pa_end += 360D
+           #    endif else begin
+           #       subframes[0].pa_start += 360D
+           #    endelse
+           # endif
 
 
 
