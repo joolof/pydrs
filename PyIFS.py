@@ -5,7 +5,7 @@ import os.path
 import datetime
 import subprocess
 import numpy as np
-# from .extras import ifs_scripts
+from .extras import ifs_scripts
 import scipy.ndimage
 from astropy.io import fits, ascii
 import matplotlib.pyplot as plt
@@ -52,6 +52,13 @@ class IFS(object):
                   star_centering in the cosmetics for the science frames). Default
                   is True (i.e., a coronagraph was used).
 
+
+
+    THINGS TO BE DONE:
+        + adapt the custom IDL scripts for the flat
+        + check the SKY measurments
+        + add the pre-processing of the data
+        + check for observations with YJH
 
     """
     def __init__(self, starname, path_to_fits, dir_cosmetics = 'cosmetics', dir_science = 'science', dir_sof = 'sof', summary = False, width = 0., kernel_width = 9, corono = True):
@@ -485,43 +492,51 @@ class IFS(object):
         f.close()
         # --------------------------------------------------------------        
         # Run the manual script
-        # To be checked later on
-        # --------------------------------------------------------------        
-        # ffname = self._dir_sof + '/master_detector_flat_white'
-        # bpname = self._dir_sof + '/dff_badpixelname_white'
-        # self.flatw = ifs_scripts.sph_ifs_detector_flat_manual(sof_file, ffname, bpname)
-        # --------------------------------------------------------------        
-        # Run the esorex pipeline
         # --------------------------------------------------------------        
         runit = raw_input('\nProceed [Y]/n: ')
         if runit != 'n':
-            args = ['esorex', 'sph_ifs_master_detector_flat',
-                    '--ifs.master_detector_flat.save_addprod=TRUE',
-                    '--ifs.master_detector_flat.outfilename=' + self._dir_cosm + '/master_detector_' + suffix + '_drh.fits',
-                    '--ifs.master_detector_flat.lss_outfilename=' + self._dir_cosm + '/large_scale_' + suffix + '_drh.fits',
-                    '--ifs.master_detector_flat.preamp_outfilename=' + self._dir_cosm +   '/preamp_' + suffix + '_drh.fits',
-                    '--ifs.master_detector_flat.badpixfilename=' + self._dir_cosm + '/dff_badpixelname_' + suffix + '_drh.fits',
-                    '--ifs.master_detector_flat.lambda=' + str(wave),
-                    '--ifs.master_detector_flat.smoothing_length=10.0',
-                    '--ifs.master_detector_flat.smoothing_method=1',
-                    self._dir_sof + '/' + suffix + '.sof']
-            doflat = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
-            print '-'*80
-            # --------------------------------------------------------------
-            # Rename the fits files
-            # --------------------------------------------------------------
-            flat_list = glob.glob(self._dir_cosm + '/*' + suffix_lamp + '.fits')
-            for i in range(len(flat_list)):
-                tmp_name = flat_list[i]
-                args = ['mv', tmp_name, tmp_name.replace('_'+suffix_lamp, '')]
-                mvfits = subprocess.Popen(args).wait()
+            ffname = self._dir_cosm + '/master_detector_' + suffix + '.fits'
+            bpname = self._dir_cosm + '/dff_badpixelname_' + suffix + '.fits'
+            ifs_scripts.sph_ifs_detector_flat_manual(sof_file, ffname, bpname)
             # --------------------------------------------------------------
             # Check if it actually produced something
             # --------------------------------------------------------------
-            if not os.path.isfile(self._dir_cosm + '/master_detector_' + suffix + '_drh.fits'):
-                self._error_msg('It seems a master_detector_' + suffix + '_drh.fits file was not produced. Check the log above')
+            if not os.path.isfile(self._dir_cosm + '/master_detector_' + suffix + '.fits'):
+                self._error_msg('It seems a master_detector_' + suffix + '.fits file was not produced. Check the log above')
         else:
             sys.exit()
+        # --------------------------------------------------------------        
+        # Run the esorex pipeline
+        # --------------------------------------------------------------        
+        # runit = raw_input('\nProceed [Y]/n: ')
+        # if runit != 'n':
+        #     args = ['esorex', 'sph_ifs_master_detector_flat',
+        #             '--ifs.master_detector_flat.save_addprod=TRUE',
+        #             '--ifs.master_detector_flat.outfilename=' + self._dir_cosm + '/master_detector_' + suffix + '_drh.fits',
+        #             '--ifs.master_detector_flat.lss_outfilename=' + self._dir_cosm + '/large_scale_' + suffix + '_drh.fits',
+        #             '--ifs.master_detector_flat.preamp_outfilename=' + self._dir_cosm +   '/preamp_' + suffix + '_drh.fits',
+        #             '--ifs.master_detector_flat.badpixfilename=' + self._dir_cosm + '/dff_badpixelname_' + suffix + '_drh.fits',
+        #             '--ifs.master_detector_flat.lambda=' + str(wave),
+        #             '--ifs.master_detector_flat.smoothing_length=10.0',
+        #             '--ifs.master_detector_flat.smoothing_method=1',
+        #             self._dir_sof + '/' + suffix + '.sof']
+        #     doflat = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
+        #     print '-'*80
+            # --------------------------------------------------------------
+            # Rename the fits files
+            # --------------------------------------------------------------
+            # flat_list = glob.glob(self._dir_cosm + '/*' + suffix_lamp + '.fits')
+            # for i in range(len(flat_list)):
+            #     tmp_name = flat_list[i]
+            #     args = ['mv', tmp_name, tmp_name.replace('_'+suffix_lamp, '')]
+            #     mvfits = subprocess.Popen(args).wait()
+            # --------------------------------------------------------------
+            # Check if it actually produced something
+            # --------------------------------------------------------------
+            # if not os.path.isfile(self._dir_cosm + '/master_detector_' + suffix + '_drh.fits'):
+            #     self._error_msg('It seems a master_detector_' + suffix + '_drh.fits file was not produced. Check the log above')
+        # else:
+        #     sys.exit()
 
     # --------------------------------------------------------------
     # Method for the wavelength calibration
@@ -1191,23 +1206,23 @@ class IFS(object):
             print 'Found a \"dark corono\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
             self._is_dark_corono = True
             print '-'*80
-        if os.path.isfile(self._dir_cosm + '/master_detector_flat_white_drh.fits'):
+        if os.path.isfile(self._dir_cosm + '/master_detector_flat_white.fits'):
             print 'Found a \"flat white\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
             self._is_flat_white = True
             print '-'*80
-        if os.path.isfile(self._dir_cosm + '/master_detector_flat_1020_drh.fits'):
+        if os.path.isfile(self._dir_cosm + '/master_detector_flat_1020.fits'):
             print 'Found a \"flat 1020\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
             self._is_flat_1020 = True
             print '-'*80
-        if os.path.isfile(self._dir_cosm + '/master_detector_flat_1230_drh.fits'):
+        if os.path.isfile(self._dir_cosm + '/master_detector_flat_1230.fits'):
             print 'Found a \"flat 1230\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
             self._is_flat_1230 = True
             print '-'*80
-        if os.path.isfile(self._dir_cosm + '/master_detector_flat_1300_drh.fits'):
+        if os.path.isfile(self._dir_cosm + '/master_detector_flat_1300.fits'):
             print 'Found a \"flat 1300\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
             self._is_flat_1300 = True
             print '-'*80
-        if os.path.isfile(self._dir_cosm + '/master_detector_flat_1550_drh.fits'):
+        if os.path.isfile(self._dir_cosm + '/master_detector_flat_1550.fits'):
             print 'Found a \"flat 1550\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
             self._is_flat_1550 = True
             print '-'*80
