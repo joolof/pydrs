@@ -5,7 +5,7 @@ import os.path
 import datetime
 import subprocess
 import numpy as np
-from .extras import ifs_scripts
+from .extras import ifs_flat_manual, ifs_preprocess
 import scipy.ndimage
 from astropy.io import fits, ascii
 import matplotlib.pyplot as plt
@@ -497,7 +497,7 @@ class IFS(object):
         if runit != 'n':
             ffname = self._dir_cosm + '/master_detector_' + suffix + '.fits'
             bpname = self._dir_cosm + '/dff_badpixelname_' + suffix + '.fits'
-            ifs_scripts.sph_ifs_detector_flat_manual(sof_file, ffname, bpname)
+            ifs_flat_manual.sph_ifs_detector_flat_manual(sof_file, ffname, bpname)
             # --------------------------------------------------------------
             # Check if it actually produced something
             # --------------------------------------------------------------

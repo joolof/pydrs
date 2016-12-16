@@ -1,12 +1,33 @@
-"""
-Module with sigma clipping functions.
-"""
-# __author__ = 'C. Gomez @ ULg', 'V. Christiaens'
-# __all__ = ['clip_array',
-#            'sigma_filter']
-# The 'clip_array' and 'sigma_filter' are taken from the VIP package
+import sys
 import numpy as np
 from scipy.ndimage.filters import generic_filter
+
+# --------------------------------------------------------------        
+# To print some error messages and exit smoothly
+# --------------------------------------------------------------        
+def error_msg(message):
+    print message
+    sys.exit()
+
+# --------------------------------------------------------------        
+# Read the SOF file (it sould definitely exists, I just created it)
+# --------------------------------------------------------------        
+def read_sof(sof_file):
+    """
+    Method to read a sof file. No checks are done, to be improved.
+    """
+    f = open(sof_file, 'r')
+    lines = f.readlines()
+    f.close()
+    nl = len(lines)
+    fits_name = []
+    fits_type = []
+    for i in range(nl):
+        fits_name.append(lines[i].split()[0])
+        fits_type.append(lines[i].split()[1])
+    fits_name = np.array(fits_name)
+    fits_type = np.array(fits_type)
+    return fits_name, fits_type
 
 
 def sigma_filter(frame_tmp, bpix_map, neighbor_box=3, min_neighbors=3, verbose=False):
@@ -30,7 +51,10 @@ def sigma_filter(frame_tmp, bpix_map, neighbor_box=3, min_neighbors=3, verbose=F
     -------
     frame_corr : array_like
         Output array with corrected bad/nan pixels
-    
+
+    Taken from the VIP package:
+    https://github.com/vortex-exoplanet/VIP stats
+    @carlgogo    
     """
     if not frame_tmp.ndim == 2:
         raise TypeError('Input array is not a frame or 2d array')
@@ -79,70 +103,6 @@ def sigma_filter(frame_tmp, bpix_map, neighbor_box=3, min_neighbors=3, verbose=F
     return im
 
 
-def clip_array(array, lower_sigma, upper_sigma, out_good=False, neighbor=False,
-              num_neighbor=None, mad=False):
-    """Sigma clipping for detecting outlying values in 2d array. If the parameter
-    'neighbor' is True the clipping can be performed in a local patch around 
-    each pixel, whose size depends on 'neighbor' parameter.
-    
-    Parameters
-    ----------
-    array : array_like 
-        Input 2d array, image.
-    lower_sigma : float 
-        Value for sigma, lower boundary.
-    upper_sigma : float 
-        Value for sigma, upper boundary.
-    out_good : {'False','True'}, optional
-        For choosing different outputs.
-    neighbor : {'False','True'}, optional
-        For clipping over the median of the contiguous pixels.
-    num_neighbor : int, optional
-        The side of the square window around each pixel where the sigma and 
-        median are calculated. 
-    mad : {False, True}, bool optional
-        If True, the median absolute deviation will be used instead of the 
-        standard deviation.
-        
-    Returns
-    -------
-    good : array_like
-        If out_good argument is true, returns the indices of not-outlying px.
-    bad : array_like 
-        If out_good argument is false, returns a vector with the outlier px.
-    
-    """
-    if not array.ndim == 2:
-        raise TypeError("Input array is not two dimensional (frame)\n")
-
-    values = array.copy()
-    if neighbor and num_neighbor:
-        median = generic_filter(array, function=np.median, 
-                                size=(num_neighbor,num_neighbor), mode="mirror")
-        if mad:
-            sigma = generic_filter(array, function=median_absolute_deviation,                                 
-                                   size=(num_neighbor,num_neighbor), 
-                                   mode="mirror")
-        else:
-            sigma = generic_filter(array, function=np.std,                                 
-                                   size=(num_neighbor,num_neighbor), 
-                                   mode="mirror")
-    else:
-        median = np.median(values)
-        sigma = values.std()
-        
-    good1 = values > (median - lower_sigma * sigma) 
-    good2 = values < (median + upper_sigma * sigma)
-    bad1 = values < (median - lower_sigma * sigma)
-    bad2 = values > (median + upper_sigma * sigma)
-    
-    if out_good:
-        good = np.where(good1 & good2)                                          # normal px indices in both good1 and good2
-        return good
-    else:
-        bad = np.where(bad1 | bad2)                                             # deviating px indices in either bad1 or bad2
-        return bad
-    
 def median_clip(array, sigma, num_neighbor = 5):
     """Sigma clipping for detecting outlying values in 2d array. If the parameter
     'neighbor' is True the clipping can be performed in a local patch around 
@@ -162,10 +122,12 @@ def median_clip(array, sigma, num_neighbor = 5):
     -------
     array where outliers have been replaced by the median values
     
+    Adapted from the VIP package sigma_filter method:
+    https://github.com/vortex-exoplanet/VIP
+    @carlgogo    
     """
     if not array.ndim == 2:
         raise TypeError("Input array is not two dimensional (frame)\n")
-
     values = array.copy()
     median = generic_filter(array, function=np.median, size=(num_neighbor,num_neighbor), mode="mirror")
     stdev = generic_filter(array, function=np.std, size=(num_neighbor,num_neighbor), mode="mirror")
