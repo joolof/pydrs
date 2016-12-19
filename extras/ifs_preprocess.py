@@ -1,5 +1,7 @@
+import os.path
 import numpy as np
 import ifs_misc as misc
+import ifs_crosstalk
 import astropy.units as u
 from astropy.io import fits
 from astropy.time import Time
@@ -75,7 +77,7 @@ def parangle(ha, dec, latitude):
 # --------------------------------------------------------------        
 # Custom routine, adapted from an IDL script written by A. Vigan
 # --------------------------------------------------------------        
-def sph_ifs_preprocess(sof_file, coll = False, bkgsub = True, bpcor = True, xtalk = False, colltyp = 'mean', collval = 0.5, colltol = 0.05):
+def sph_ifs_preprocess(sof_file, folder, coll = False, bkgsub = True, bpcor = True, xtalk = False, colltyp = 'mean', collval = 0.5, colltol = 0.05):
     """
     From Arthur Vigan's IDL script. All credits go to him.
     Paper to be cited:
@@ -105,17 +107,7 @@ def sph_ifs_preprocess(sof_file, coll = False, bkgsub = True, bpcor = True, xtal
     # --------------------------------------------------------------        
     # Read the SOF file (it sould definitely exists, I just created it)
     # --------------------------------------------------------------        
-    f = open(sof_file, 'r')
-    lines = f.readlines()
-    f.close()
-    nl = len(lines)
-    fits_name = []
-    fits_type = []
-    for i in range(nl):
-        fits_name.append(lines[i].split()[0])
-        fits_type.append(lines[i].split()[1])
-    fits_name = np.array(fits_name)
-    fits_type = np.array(fits_type)
+    fits_name, fits_type = misc.read_sof(sof_file)
     # --------------------------------------------------------------        
     sel_ff = np.where(fits_type == 'IFS_RAW')[0]
     sel_dd = np.where(fits_type == 'IFS_MASTER_DARK')[0]
@@ -278,12 +270,17 @@ def sph_ifs_preprocess(sof_file, coll = False, bkgsub = True, bpcor = True, xtal
                 if ndit > 1:
                     for i in range(ndit):
                         frame = img[i,].copy()
-                        # do something
+                        frame = ifs_crosstalk.sph_ifs_crosstalk(frame)
                         img[i,] = frame
-                # else:
-                    # do the thing here
-                    # img = clip_sigma.sigma_filter(img, bpm, neighbor_box = 6, min_neighbors = 5)
+                else:
+                    img = ifs_crosstalk.sph_ifs_crosstalk(img)
             # --------------------------------------------------------------
             # Save the fits file
             # --------------------------------------------------------------
+            hdr['HIERARCH ESO TEL PARANG START'] = final_pa_start
+            hdr['HIERARCH ESO TEL PARANG END'] = final_pa_end
             suffix = '_preproc'
+            fname = os.path.basename(raw_file[j])
+            fname.replace('.fits', '')
+            fname = folder + '/' + fname + suffix + '.fits'
+            fits.writeto(fname, img, clobber = True, output_verify = "ignore", header = hdr)

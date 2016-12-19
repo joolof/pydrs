@@ -53,15 +53,13 @@ class IFS(object):
                   is True (i.e., a coronagraph was used).
 
 
-
     THINGS TO BE DONE:
-        + adapt the custom IDL scripts for the flat
         + check the SKY measurments
-        + add the pre-processing of the data
+        + add the pre-processing of the SCIENCE data
         + check for observations with YJH
 
     """
-    def __init__(self, starname, path_to_fits, dir_cosmetics = 'cosmetics', dir_science = 'science', dir_sof = 'sof', summary = False, width = 0., kernel_width = 9, corono = True):
+    def __init__(self, starname, path_to_fits, dir_pre_proc = 'preprocess', dir_cosmetics = 'cosmetics', dir_science = 'science', dir_sof = 'sof', summary = False, width = 0., kernel_width = 9, corono = True):
         # --------------------------------------------------------------        
         # Check the inputs
         # --------------------------------------------------------------        
@@ -70,6 +68,7 @@ class IFS(object):
         assert type(corono) is bool, 'The variable \'corono\' should be True or False'
         assert type(dir_cosmetics) is str, 'The name of the cosmetics directory should be a string'
         assert type(dir_science) is str, 'The name of the science directory should be a string'
+        assert type(dir_pre_proc) is str, 'The name of the preprocess directory should be a string'
         assert type(dir_sof) is str, 'The name of the sof directory should be a string'
         assert type(path_to_fits) is str, 'The name of the directory containing the fits file should be a string'
         assert type(width) is float, 'The value of width should be a float or an integer'
@@ -97,16 +96,21 @@ class IFS(object):
         self._is_wave_cal = False
         self._is_specpos = False
         self._is_ifuflat = False
+        self._is_science = False
 
         self._is_dark = False
         self._is_flat = False
         self._is_center = False
         self._is_flux = False
-        self._is_science = False
         self._corono = corono
         # --------------------------------------------------------------
         # Check for existing directories, if not there try to create them
         # --------------------------------------------------------------
+        if not os.path.isdir(dir_pre_proc):
+            try:
+                os.mkdir(dir_pre_proc)
+            except:
+                self._error_msg("Cannot create the directory \"" + dir_pre_proc +"\"")
         if not os.path.isdir(dir_cosmetics):
             try:
                 os.mkdir(dir_cosmetics)
@@ -122,6 +126,7 @@ class IFS(object):
                 os.mkdir(dir_sof)
             except:
                 self._error_msg("Cannot create the directory \"" + dir_sof +"\"")
+        self._dir_pre_proc = dir_pre_proc
         self._dir_cosm = dir_cosmetics
         self._dir_sci = dir_science
         self._dir_sof = dir_sof
@@ -179,7 +184,7 @@ class IFS(object):
         if not self._is_wave_cal: self._specpos()
         if not self._is_specpos: self._wave_cal()
         if not self._is_ifuflat: self._ifu_flat()
-
+        if not self._is_science: self._sci()
 
         # if not self._is_flat: self._flat()
         # if self._corono:
@@ -493,50 +498,50 @@ class IFS(object):
         # --------------------------------------------------------------        
         # Run the manual script
         # --------------------------------------------------------------        
+        # runit = raw_input('\nProceed [Y]/n: ')
+        # if runit != 'n':
+        #     ffname = self._dir_cosm + '/master_detector_' + suffix + '.fits'
+        #     bpname = self._dir_cosm + '/dff_badpixelname_' + suffix + '.fits'
+        #     ifs_flat_manual.sph_ifs_detector_flat_manual(sof_file, ffname, bpname)
+        #     # --------------------------------------------------------------
+        #     # Check if it actually produced something
+        #     # --------------------------------------------------------------
+        #     if not os.path.isfile(self._dir_cosm + '/master_detector_' + suffix + '.fits'):
+        #         self._error_msg('It seems a master_detector_' + suffix + '.fits file was not produced. Check the log above')
+        # else:
+        #     sys.exit()
+        # --------------------------------------------------------------        
+        # Run the esorex pipeline
+        # --------------------------------------------------------------        
         runit = raw_input('\nProceed [Y]/n: ')
         if runit != 'n':
-            ffname = self._dir_cosm + '/master_detector_' + suffix + '.fits'
-            bpname = self._dir_cosm + '/dff_badpixelname_' + suffix + '.fits'
-            ifs_flat_manual.sph_ifs_detector_flat_manual(sof_file, ffname, bpname)
+            args = ['esorex', 'sph_ifs_master_detector_flat',
+                    '--ifs.master_detector_flat.save_addprod=TRUE',
+                    '--ifs.master_detector_flat.outfilename=' + self._dir_cosm + '/master_detector_' + suffix + '_drh.fits',
+                    '--ifs.master_detector_flat.lss_outfilename=' + self._dir_cosm + '/large_scale_' + suffix + '_drh.fits',
+                    '--ifs.master_detector_flat.preamp_outfilename=' + self._dir_cosm +   '/preamp_' + suffix + '_drh.fits',
+                    '--ifs.master_detector_flat.badpixfilename=' + self._dir_cosm + '/dff_badpixelname_' + suffix + '_drh.fits',
+                    '--ifs.master_detector_flat.lambda=' + str(wave),
+                    '--ifs.master_detector_flat.smoothing_length=10.0',
+                    '--ifs.master_detector_flat.smoothing_method=1',
+                    self._dir_sof + '/' + suffix + '.sof']
+            doflat = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
+            print '-'*80
+            # --------------------------------------------------------------
+            # Rename the fits files
+            # --------------------------------------------------------------
+            flat_list = glob.glob(self._dir_cosm + '/*' + suffix_lamp + '.fits')
+            for i in range(len(flat_list)):
+                tmp_name = flat_list[i]
+                args = ['mv', tmp_name, tmp_name.replace('_drh_'+suffix_lamp, '')]
+                mvfits = subprocess.Popen(args).wait()
             # --------------------------------------------------------------
             # Check if it actually produced something
             # --------------------------------------------------------------
             if not os.path.isfile(self._dir_cosm + '/master_detector_' + suffix + '.fits'):
-                self._error_msg('It seems a master_detector_' + suffix + '.fits file was not produced. Check the log above')
+                self._error_msg('It seems a master_detector_' + suffix + '_drh.fits file was not produced. Check the log above')
         else:
             sys.exit()
-        # --------------------------------------------------------------        
-        # Run the esorex pipeline
-        # --------------------------------------------------------------        
-        # runit = raw_input('\nProceed [Y]/n: ')
-        # if runit != 'n':
-        #     args = ['esorex', 'sph_ifs_master_detector_flat',
-        #             '--ifs.master_detector_flat.save_addprod=TRUE',
-        #             '--ifs.master_detector_flat.outfilename=' + self._dir_cosm + '/master_detector_' + suffix + '_drh.fits',
-        #             '--ifs.master_detector_flat.lss_outfilename=' + self._dir_cosm + '/large_scale_' + suffix + '_drh.fits',
-        #             '--ifs.master_detector_flat.preamp_outfilename=' + self._dir_cosm +   '/preamp_' + suffix + '_drh.fits',
-        #             '--ifs.master_detector_flat.badpixfilename=' + self._dir_cosm + '/dff_badpixelname_' + suffix + '_drh.fits',
-        #             '--ifs.master_detector_flat.lambda=' + str(wave),
-        #             '--ifs.master_detector_flat.smoothing_length=10.0',
-        #             '--ifs.master_detector_flat.smoothing_method=1',
-        #             self._dir_sof + '/' + suffix + '.sof']
-        #     doflat = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
-        #     print '-'*80
-            # --------------------------------------------------------------
-            # Rename the fits files
-            # --------------------------------------------------------------
-            # flat_list = glob.glob(self._dir_cosm + '/*' + suffix_lamp + '.fits')
-            # for i in range(len(flat_list)):
-            #     tmp_name = flat_list[i]
-            #     args = ['mv', tmp_name, tmp_name.replace('_'+suffix_lamp, '')]
-            #     mvfits = subprocess.Popen(args).wait()
-            # --------------------------------------------------------------
-            # Check if it actually produced something
-            # --------------------------------------------------------------
-            # if not os.path.isfile(self._dir_cosm + '/master_detector_' + suffix + '_drh.fits'):
-            #     self._error_msg('It seems a master_detector_' + suffix + '_drh.fits file was not produced. Check the log above')
-        # else:
-        #     sys.exit()
 
     # --------------------------------------------------------------
     # Method for the wavelength calibration
@@ -670,7 +675,7 @@ class IFS(object):
             print ' '
             sys.exit()
             f.write(self._dir_cosm + '/master_detector_flat_1550.fits      IFS_MASTER_DFF_LONG4\n')
-        f.write(self._dir_cosm + '/master_detector_flat_white.fits     IFS_MASTER_DFF_LONGB\n')
+        f.write(self._dir_cosm + '/master_detector_flat_white.fits     IFS_MASTER_DFF_LONGBB\n')
         f.write(self._dir_cosm + '/master_detector_flat_white.fits     IFS_MASTER_DFF_SHORT\n')
         f.write(self._dir_cosm + '/dark_cal.fits                       IFS_MASTER_DARK\n')
         f.close()
@@ -692,6 +697,81 @@ class IFS(object):
                 self._error_msg('It seems a ifu_flat.fits file was not produced. Check the log above')
         else:
             sys.exit()
+
+    # --------------------------------------------------------------
+    # Method for the SCI and CENTER files
+    # --------------------------------------------------------------
+    def _sci(self):
+        """
+        Method for the PSF science files
+        """
+        # --------------------------------------------------------------
+        # First, identify the proper files
+        # --------------------------------------------------------------
+        fits_center = self._find_fits('CENTER')
+        fits_sci = self._find_fits('SCIENCE')
+        fits_psf = self._find_fits('FLUX')
+        # --------------------------------------------------------------
+        # Write the SOF file
+        # --------------------------------------------------------------
+        runit = raw_input('\nProceed [Y]/n: ')
+        if runit != 'n':
+            for i in range(len(fits_psf)):
+                self._run_ifs_science(fits_psf[i], self._dir_sof + '/psf_sci.sof', 'flux')
+            for i in range(len(fits_center)):
+                self._run_ifs_science(fits_center[i], self._dir_sof + '/science_frames.sof', 'center')
+            for i in range(len(fits_sci)):
+                self._run_ifs_science(fits_sci[i], self._dir_sof + '/science_frames.sof', 'sci')
+        else:
+            sys.exit()
+
+
+    def _run_ifs_science(self, filename, sof_file, suffix):
+        """
+        Method to run the sph_ifs_science_dr esorex recipe
+        """
+        f = open(sof_file, 'w')
+        f.write(self._path_to_fits + '/' + filename + '\tIFS_SCIENCE_DR_RAW\n')
+        f.write(self._dir_cosm + '/master_detector_flat_1020.fits      IFS_MASTER_DFF_LONG1\n')
+        f.write(self._dir_cosm + '/master_detector_flat_1230.fits      IFS_MASTER_DFF_LONG2\n')
+        f.write(self._dir_cosm + '/master_detector_flat_1300.fits      IFS_MASTER_DFF_LONG3\n')
+        if self.obs_filter != 'OBS_YJ':
+            # Int he original script, it was:
+            # if [ ${MODE} = 'YJH' ]; then
+            # fi
+            print ' '
+            print 'Check the observing mode in ifu_flat !!!'
+            print ' '
+            sys.exit()
+            f.write(self._dir_cosm + '/master_detector_flat_1550.fits      IFS_MASTER_DFF_LONG4\n')
+        f.write(self._dir_cosm + '/master_detector_flat_white.fits     IFS_MASTER_DFF_LONGBB\n')
+        f.write(self._dir_cosm + '/master_detector_flat_white.fits     IFS_MASTER_DFF_SHORT\n')
+        f.write(self._dir_cosm + '/dark_cal.fits                       IFS_MASTER_DARK\n')
+        f.write(self._dir_cosm + '/wave_calib.fits                     IFS_WAVECALIB\n')
+        f.write(self._dir_cosm + '/ifu_flat.fits                     IFS_IFU_FLAT_FIELD\n')
+        f.close()
+        # --------------------------------------------------------------        
+        # Run the esorex pipeline
+        # --------------------------------------------------------------        
+        args = ['esorex', 'sph_ifs_science_dr',
+                '--ifs.science_dr.use_adi=0',
+                '--ifs.science_dr.spec_deconv=FALSE',
+                sof_file]
+        master = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
+        # Rename and move other files
+        mvfiles = glob.glob('SPHER*.*')
+        for i in range(len(mvfiles)):
+            tmp_name = mvfiles[i].replace('_', '_' + suffix + '_')
+            args = ['mv', mvfiles[i], self._dir_sci + '/' + tmp_name]
+            mvf = subprocess.Popen(args).wait()
+        args = ['rm', 'ifs_science_dr.fits']
+        rmcompiled = subprocess.Popen(args).wait()
+        print '-'*80
+            # --------------------------------------------------------------
+            # Check if it actually produced something
+            # --------------------------------------------------------------
+            # if not os.path.isfile(self._dir_cosm + '/ifu_flat.fits'):
+            #     self._error_msg('It seems a ifu_flat.fits file was not produced. Check the log above')
 
 
 
@@ -1238,6 +1318,15 @@ class IFS(object):
             print 'Found a \"IFU flat\" in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
             self._is_ifuflat = True
             print '-'*80
+
+        list_flux = glob.glob(self._dir_sci + '/SPHER*flux*')
+        list_center = glob.glob(self._dir_sci + '/SPHER*center*')
+        list_sci = glob.glob(self._dir_sci + '/SPHER*sci*')
+        if ((len(list_flux) != 0) & (len(list_center) != 0) & (len(list_sci) != 0)):
+            print 'Found FLUX, CENTER, and SCIENCE frames in \"' + self._dir_sci + '\". Erase if you want to recalculate them.'
+            self._is_science = True
+
+
 
 
 

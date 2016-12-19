@@ -2,7 +2,7 @@ import numpy as np
 from astropy.io import fits
 from scipy.signal import fftconvolve as conv
 # --------------------------------------------------------------
-def sph_if_crosstalk(img, remove_large_scale = False):
+def sph_ifs_crosstalk(img, remove_large_scale = True):
     """
     Adapted from A. Vigan's IDL scripts
     """
@@ -85,9 +85,9 @@ def sph_if_crosstalk(img, remove_large_scale = False):
             cy = np.int(np.float(k)/np.float(dimimgct))
             cx = k - cy * dimimgct
             imgsub[valinix[k]:valfinx[k],valiniy[k]:valfiny[k]] = img[valinix[k]:valfinx[k],valiniy[k]:valfiny[k]] - imgct[cx,cy]
-         imgsub = np.float(imgsub)
+        imgsub = np.float(imgsub)
   
-  return imgsub
+    return imgsub
 
 
 
