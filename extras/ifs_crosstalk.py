@@ -46,8 +46,8 @@ def sph_ifs_crosstalk(img, remove_large_scale = True):
         konta = 0
      
         # Define the positions of the subimages
-        for j in range(dimingct):
-            for k in range(dimingct):
+        for j in range(dimimgct):
+            for k in range(dimimgct):
                 valinix[konta] = k * dimsub
                 valfinx[konta] = valinix[konta] + dimsub - 1
                 valiniy[konta] = j * dimsub
@@ -55,8 +55,8 @@ def sph_ifs_crosstalk(img, remove_large_scale = True):
                 konta = konta+1
 
         mdnimg = np.median(img)
-        for k in range(dimingct):
-            for j in range(dimingct):
+        for k in range(dimimgct):
+            for j in range(dimimgct):
                 if np.abs(img[k,j]) > 30000.:
                     img[k,j] = mdnimg
 
@@ -85,7 +85,7 @@ def sph_ifs_crosstalk(img, remove_large_scale = True):
             cy = np.int(np.float(k)/np.float(dimimgct))
             cx = k - cy * dimimgct
             imgsub[valinix[k]:valfinx[k],valiniy[k]:valfiny[k]] = img[valinix[k]:valfinx[k],valiniy[k]:valfiny[k]] - imgct[cx,cy]
-        imgsub = np.float(imgsub)
+        # imgsub = np.float(imgsub)
   
     return imgsub
 

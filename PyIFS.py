@@ -56,6 +56,7 @@ class IFS(object):
     THINGS TO BE DONE:
         + check the SKY measurments
         + add the pre-processing of the SCIENCE data
+        + add the pre-processing of the wave calibration files.
         + check for observations with YJH
 
     """
@@ -185,6 +186,9 @@ class IFS(object):
         if not self._is_specpos: self._wave_cal()
         if not self._is_ifuflat: self._ifu_flat()
         if not self._is_science: self._sci()
+
+        self._wave_collapse()
+
 
         # if not self._is_flat: self._flat()
         # if self._corono:
@@ -708,14 +712,17 @@ class IFS(object):
         # --------------------------------------------------------------
         # First, identify the proper files
         # --------------------------------------------------------------
+        fits_wave = self._find_fits('WAVECAL')
+        fits_psf = self._find_fits('FLUX')
         fits_center = self._find_fits('CENTER')
         fits_sci = self._find_fits('SCIENCE')
-        fits_psf = self._find_fits('FLUX')
         # --------------------------------------------------------------
         # Write the SOF file
         # --------------------------------------------------------------
         runit = raw_input('\nProceed [Y]/n: ')
         if runit != 'n':
+            for i in range(len(fits_wave)):
+                self._run_ifs_science(fits_wave[i], self._dir_sof + '/wave_cal.sof', 'wave')
             for i in range(len(fits_psf)):
                 self._run_ifs_science(fits_psf[i], self._dir_sof + '/psf_sci.sof', 'flux')
             for i in range(len(fits_center)):
@@ -773,7 +780,28 @@ class IFS(object):
             # if not os.path.isfile(self._dir_cosm + '/ifu_flat.fits'):
             #     self._error_msg('It seems a ifu_flat.fits file was not produced. Check the log above')
 
+    # --------------------------------------------------------------
+    # Wavelength calibration collapse
+    # --------------------------------------------------------------
+    def _wave_collapse(self):
+        """
+        Use the pre-process routine to collapse the cube 
+        """
+        # --------------------------------------------------------------
+        # First, identify the proper files
+        # --------------------------------------------------------------
+        fits_wave = self._find_fits('WAVECAL')
+        # --------------------------------------------------------------
+        # Write the SOF file
+        # --------------------------------------------------------------
+        f = open(self._dir_sof + '/preproc.sof', 'w')
+        for i in range(len(fits_wave)):
+            f.write(self._path_to_fits + '/' + fits_wave[i] + '\tIFS_RAW\n')
+        f.write(self._dir_cosm + '/dark_cal.fits\tIFS_MASTER_DARK\n')
+        f.write(self._dir_cosm + '/dark_bpm_psf.fits\tIFS_STATIC_BADPIXELMAP\n')
+        f.close()
 
+        ifs_preprocess.sph_ifs_preprocess(self._dir_sof + '/preproc.sof', self._dir_pre_proc, coll = True, bkgsub = False, bpcor = True, xtalk = True, colltyp = 'mean', update_pa = False, catg = 'wave')
 
     # --------------------------------------------------------------
     # Method to read the filter curves
@@ -1319,43 +1347,13 @@ class IFS(object):
             self._is_ifuflat = True
             print '-'*80
 
+        list_wave = glob.glob(self._dir_sci + '/SPHER*wave*')
         list_flux = glob.glob(self._dir_sci + '/SPHER*flux*')
         list_center = glob.glob(self._dir_sci + '/SPHER*center*')
         list_sci = glob.glob(self._dir_sci + '/SPHER*sci*')
-        if ((len(list_flux) != 0) & (len(list_center) != 0) & (len(list_sci) != 0)):
-            print 'Found FLUX, CENTER, and SCIENCE frames in \"' + self._dir_sci + '\". Erase if you want to recalculate them.'
+        if ((len(list_wave) != 0) & (len(list_flux) != 0) & (len(list_center) != 0) & (len(list_sci) != 0)):
+            print 'Found WAVE, FLUX, CENTER, and SCIENCE frames in \"' + self._dir_sci + '\". Erase if you want to recalculate them.'
             self._is_science = True
-
-
-
-
-
-        if os.path.isfile(self._dir_cosm + '/irdis_flat.fits'):
-            print 'Found a FLAT in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
-            self._is_flat = True
-            print '-'*80
-        if os.path.isfile(self._dir_cosm + '/starcenter.fits'):
-            print 'Found a STAR CENTER in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
-            self._is_center = True
-            print '-'*80
-        if (os.path.isfile(self._dir_cosm + '/psf_left.fits') & os.path.isfile(self._dir_cosm + '/psf_right.fits')):
-            print 'Found a STELLAR PSF in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
-            self._is_flux = True
-            print '-'*80
-        if ((self.obs_mode == 'IMAGE,DUAL') | (self.obs_mode == 'IMAGE,CLASSICAL')):
-            if os.path.isfile('science_dbi.fits'):
-                print 'Found a science frame in this directory. Erase it if you want to recalculate it.'
-                self._is_science = True
-                print '-'*80
-        elif self.obs_mode == 'POLARIMETRY':
-            if os.path.isfile('science_imaging.fits'):
-                print 'Found a science frame in \'' + self._dir_sci + '/\'. Erase it if you want to recalculate it.'
-                self._is_science = True
-                print '-'*80
-            if os.path.isfile('science_dbi.fits'):
-                print 'Found a science frame in this directory. Erase it if you want to recalculate it.'
-                self._is_science = True
-                print '-'*80
 
     # --------------------------------------------------------------
     # Method to make a summary of what can be done.

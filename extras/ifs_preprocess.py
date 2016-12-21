@@ -77,7 +77,9 @@ def parangle(ha, dec, latitude):
 # --------------------------------------------------------------        
 # Custom routine, adapted from an IDL script written by A. Vigan
 # --------------------------------------------------------------        
-def sph_ifs_preprocess(sof_file, folder, coll = False, bkgsub = True, bpcor = True, xtalk = False, colltyp = 'mean', collval = 0.5, colltol = 0.05):
+def sph_ifs_preprocess(sof_file, folder, coll = False, bkgsub = True, bpcor = True, 
+                       xtalk = False, colltyp = 'mean', collval = 0.5, colltol = 0.05, 
+                       update_pa = True, catg = None):
     """
     From Arthur Vigan's IDL script. All credits go to him.
     Paper to be cited:
@@ -98,6 +100,9 @@ def sph_ifs_preprocess(sof_file, folder, coll = False, bkgsub = True, bpcor = Tr
     if type(bkgsub) is not bool: error_msg('bkgsub should be a boolean.') 
     if type(bpcor) is not bool: error_msg('bpcor should be a boolean.') 
     if type(xtalk) is not bool: error_msg('xtalk should be a boolean.') 
+    if type(update_pa) is not bool: error_msg('update_pa should be a boolean.') 
+    if catg is not None:
+        if type(catg) is not str: error_msg('catg should be a string.') 
     if collval <=0: error_msg('collval should be >0')
     if colltol <=0: error_msg('colltol should be >0')
     if (colltyp != 'mean'):
@@ -178,7 +183,14 @@ def sph_ifs_preprocess(sof_file, folder, coll = False, bkgsub = True, bpcor = Tr
         # --------------------------------------------------------------        
         # Get relevant info from the header
         # --------------------------------------------------------------
-        ndit, pa_beg, pa_mid, pa_end = header_info(hdr)
+        if update_pa:
+            ndit, pa_beg, pa_mid, pa_end = header_info(hdr)
+        else:
+            if len(np.shape(img)) == 3:
+                ndit = np.shape(img)[0]
+            else:
+                ndit = 1
+        print '\t\tNDIT = ' + str(ndit)
         # --------------------------------------------------------------        
         # Apply the background subtraction
         # --------------------------------------------------------------        
@@ -209,15 +221,11 @@ def sph_ifs_preprocess(sof_file, folder, coll = False, bkgsub = True, bpcor = Tr
                 else:
                     idx = 0
                 # Probably need to update the parallactic angle ... will see later on
-                final_pa_start = pa_beg[0]
-                final_pa_end = pa_end[idx]
-                # if final_pa_start/final_pa_end < 0.:
-                #     if final_pa_start > final_pa_end:
-                #         final_pa_end += 360.
-                #     else:
-                #         final_pa_start += 360.
-                print '\t\tPA start: ' + format(final_pa_start, '0.2f')
-                print '\t\tPA end: ' + format(final_pa_end, '0.2f')
+                if update_pa:
+                    final_pa_start = pa_beg[0]
+                    final_pa_end = pa_end[idx]
+                    print '\t\tPA start: ' + format(final_pa_start, '0.2f')
+                    print '\t\tPA end: ' + format(final_pa_end, '0.2f')
             # --------------------------------------------------------------
             # For the ANGLE
             # --------------------------------------------------------------
@@ -249,19 +257,19 @@ def sph_ifs_preprocess(sof_file, folder, coll = False, bkgsub = True, bpcor = Tr
                 if ndit > 1:
                     for i in range(ndit):
                         frame = img[i,].copy()
-                        print '\tMasking and interpolating the flat: first pass ...'
-                        frame = clip_sigma.sigma_filter(frame, bpm, neighbor_box = 6, min_neighbors = 5)
-                        print '\tSigma clipping: first pass ...'
-                        frame = clip_sigma.median_clip(frame, 5., num_neighbor = 5)
-                        print '\tSigma clipping: second pass ...'
-                        frame = clip_sigma.median_clip(frame, 3., num_neighbor = 5)
+                        print '\t\t\tMasking and interpolating the flat: first pass ...'
+                        frame = misc.sigma_filter(frame, bpm, neighbor_box = 6, min_neighbors = 5)
+                        print '\t\t\tSigma clipping: first pass ...'
+                        frame = misc.median_clip(frame, 5., num_neighbor = 5)
+                        print '\t\t\tSigma clipping: second pass ...'
+                        frame = misc.median_clip(frame, 3., num_neighbor = 5)
                         img[i,] = frame
                 else:
-                    img = clip_sigma.sigma_filter(img, bpm, neighbor_box = 6, min_neighbors = 5)
-                    print '\tSigma clipping: first pass ...'
-                    img = clip_sigma.median_clip(img, 5., num_neighbor = 5)
-                    print '\tSigma clipping: second pass ...'
-                    img = clip_sigma.median_clip(img, 3., num_neighbor = 5)
+                    img = misc.sigma_filter(img, bpm, neighbor_box = 6, min_neighbors = 5)
+                    print '\t\t\tSigma clipping: first pass ...'
+                    img = misc.median_clip(img, 5., num_neighbor = 5)
+                    print '\t\t\tSigma clipping: second pass ...'
+                    img = misc.median_clip(img, 3., num_neighbor = 5)
             # --------------------------------------------------------------
             # Now the freaking cross talk ...
             # --------------------------------------------------------------
@@ -277,10 +285,13 @@ def sph_ifs_preprocess(sof_file, folder, coll = False, bkgsub = True, bpcor = Tr
             # --------------------------------------------------------------
             # Save the fits file
             # --------------------------------------------------------------
-            hdr['HIERARCH ESO TEL PARANG START'] = final_pa_start
-            hdr['HIERARCH ESO TEL PARANG END'] = final_pa_end
+            if update_pa:
+                hdr['HIERARCH ESO TEL PARANG START'] = final_pa_start
+                hdr['HIERARCH ESO TEL PARANG END'] = final_pa_end
             suffix = '_preproc'
             fname = os.path.basename(raw_file[j])
-            fname.replace('.fits', '')
+            fname = fname.replace('.fits', '')
+            if catg is not None:
+                fname +=  + '_' + catg                
             fname = folder + '/' + fname + suffix + '.fits'
             fits.writeto(fname, img, clobber = True, output_verify = "ignore", header = hdr)
