@@ -292,6 +292,6 @@ def sph_ifs_preprocess(sof_file, folder, coll = False, bkgsub = True, bpcor = Tr
             fname = os.path.basename(raw_file[j])
             fname = fname.replace('.fits', '')
             if catg is not None:
-                fname +=  + '_' + catg                
+                fname = fname + '_' + catg                
             fname = folder + '/' + fname + suffix + '.fits'
             fits.writeto(fname, img, clobber = True, output_verify = "ignore", header = hdr)

@@ -5,18 +5,17 @@ import os.path
 import datetime
 import subprocess
 import numpy as np
-from .extras import ifs_flat_manual, ifs_preprocess
 import scipy.ndimage
-from astropy.io import fits, ascii
 import matplotlib.pyplot as plt
-from astropy.stats import sigma_clip
+from astropy.io import fits, ascii
+from .extras import ifs_flat_manual, ifs_preprocess, ifs_misc
 from photutils import CircularAperture, CircularAnnulus, aperture_photometry, daofind
 from scipy.signal import fftconvolve, medfilt
-# try:
-#     import vip
-#     is_vip = True
-# except ImportError:
-#     is_vip = False
+try:
+    import vip
+    is_vip = True
+except ImportError:
+    is_vip = False
 # -----------------------------------------------------------------------------
 class IFS(object):
     """
@@ -60,29 +59,26 @@ class IFS(object):
         + check for observations with YJH
 
     """
-    def __init__(self, starname, path_to_fits, dir_pre_proc = 'preprocess', dir_cosmetics = 'cosmetics', dir_science = 'science', dir_sof = 'sof', summary = False, width = 0., kernel_width = 9, corono = True):
+    def __init__(self, starname, path_to_fits, dir_pre_proc = 'preprocess', dir_cosmetics = 'cosmetics', 
+                 dir_science = 'science', dir_ready = 'sci_ready', dir_sof = 'sof', summary = False):
         # --------------------------------------------------------------        
         # Check the inputs
         # --------------------------------------------------------------        
         assert type(starname) is str, 'The name of the star should be a string'
         assert type(summary) is bool, 'The variable \'summary\' should be True or False'
-        assert type(corono) is bool, 'The variable \'corono\' should be True or False'
         assert type(dir_cosmetics) is str, 'The name of the cosmetics directory should be a string'
+        assert type(dir_ready) is str, 'The name of the \"science ready\" directory should be a string'
         assert type(dir_science) is str, 'The name of the science directory should be a string'
         assert type(dir_pre_proc) is str, 'The name of the preprocess directory should be a string'
         assert type(dir_sof) is str, 'The name of the sof directory should be a string'
         assert type(path_to_fits) is str, 'The name of the directory containing the fits file should be a string'
-        assert type(width) is float, 'The value of width should be a float or an integer'
-        assert type(kernel_width) is int, 'The width of the kernel for the readout smoothing should be an integer'
         if not os.path.isdir(path_to_fits):
             self._error_msg('The directory containing the fits files cannot be found.')
         # --------------------------------------------------------------        
         # Define some variables
         # --------------------------------------------------------------        
-        self._km = kernel_width
         self._nx = 1024
         self._starname = starname
-        self._width = width
         self._path_to_fits = path_to_fits
         self._csv_red = False
         self._is_dark_sky = False
@@ -98,15 +94,21 @@ class IFS(object):
         self._is_specpos = False
         self._is_ifuflat = False
         self._is_science = False
+        self._is_wave_preproc = False
+        self._is_clean = False
 
         self._is_dark = False
         self._is_flat = False
         self._is_center = False
         self._is_flux = False
-        self._corono = corono
         # --------------------------------------------------------------
         # Check for existing directories, if not there try to create them
         # --------------------------------------------------------------
+        if not os.path.isdir(dir_ready):
+            try:
+                os.mkdir(dir_ready)
+            except:
+                self._error_msg("Cannot create the directory \"" + dir_ready +"\"")
         if not os.path.isdir(dir_pre_proc):
             try:
                 os.mkdir(dir_pre_proc)
@@ -130,6 +132,7 @@ class IFS(object):
         self._dir_pre_proc = dir_pre_proc
         self._dir_cosm = dir_cosmetics
         self._dir_sci = dir_science
+        self._dir_ready = dir_ready
         self._dir_sof = dir_sof
         # --------------------------------------------------------------        
         # Check if the star has observations in the directory
@@ -185,23 +188,12 @@ class IFS(object):
         if not self._is_wave_cal: self._specpos()
         if not self._is_specpos: self._wave_cal()
         if not self._is_ifuflat: self._ifu_flat()
+        if not self._is_wave_preproc: self._wave_collapse()
         if not self._is_science: self._sci()
+        if not os.path.isfile(self._dir_sci + '/center_pos.csv'): self._get_center()
+        self._center_science()
+        # if not self._is_clean: self._clean_sci()
 
-        self._wave_collapse()
-
-
-        # if not self._is_flat: self._flat()
-        # if self._corono:
-        #     if not self._is_center: self._center()
-        # if not self._is_flux: self._flux()
-        # if not self._is_science: self._science()
-        # --------------------------------------------------------------
-        # Merge the frames if necessary
-        # --------------------------------------------------------------
-        # if ((self.obs_mode == 'IMAGE,DUAL') | (self.obs_mode == 'IMAGE,CLASSICAL')):
-        #     self._merge()
-        # if self.obs_mode == 'POLARIMETRY':
-        #     self._reduce_dpi()
 
     # --------------------------------------------------------------
     # Method to integrate something
@@ -502,50 +494,50 @@ class IFS(object):
         # --------------------------------------------------------------        
         # Run the manual script
         # --------------------------------------------------------------        
-        # runit = raw_input('\nProceed [Y]/n: ')
-        # if runit != 'n':
-        #     ffname = self._dir_cosm + '/master_detector_' + suffix + '.fits'
-        #     bpname = self._dir_cosm + '/dff_badpixelname_' + suffix + '.fits'
-        #     ifs_flat_manual.sph_ifs_detector_flat_manual(sof_file, ffname, bpname)
-        #     # --------------------------------------------------------------
-        #     # Check if it actually produced something
-        #     # --------------------------------------------------------------
-        #     if not os.path.isfile(self._dir_cosm + '/master_detector_' + suffix + '.fits'):
-        #         self._error_msg('It seems a master_detector_' + suffix + '.fits file was not produced. Check the log above')
-        # else:
-        #     sys.exit()
-        # --------------------------------------------------------------        
-        # Run the esorex pipeline
-        # --------------------------------------------------------------        
         runit = raw_input('\nProceed [Y]/n: ')
         if runit != 'n':
-            args = ['esorex', 'sph_ifs_master_detector_flat',
-                    '--ifs.master_detector_flat.save_addprod=TRUE',
-                    '--ifs.master_detector_flat.outfilename=' + self._dir_cosm + '/master_detector_' + suffix + '_drh.fits',
-                    '--ifs.master_detector_flat.lss_outfilename=' + self._dir_cosm + '/large_scale_' + suffix + '_drh.fits',
-                    '--ifs.master_detector_flat.preamp_outfilename=' + self._dir_cosm +   '/preamp_' + suffix + '_drh.fits',
-                    '--ifs.master_detector_flat.badpixfilename=' + self._dir_cosm + '/dff_badpixelname_' + suffix + '_drh.fits',
-                    '--ifs.master_detector_flat.lambda=' + str(wave),
-                    '--ifs.master_detector_flat.smoothing_length=10.0',
-                    '--ifs.master_detector_flat.smoothing_method=1',
-                    self._dir_sof + '/' + suffix + '.sof']
-            doflat = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
-            print '-'*80
-            # --------------------------------------------------------------
-            # Rename the fits files
-            # --------------------------------------------------------------
-            flat_list = glob.glob(self._dir_cosm + '/*' + suffix_lamp + '.fits')
-            for i in range(len(flat_list)):
-                tmp_name = flat_list[i]
-                args = ['mv', tmp_name, tmp_name.replace('_drh_'+suffix_lamp, '')]
-                mvfits = subprocess.Popen(args).wait()
+            ffname = self._dir_cosm + '/master_detector_' + suffix + '.fits'
+            bpname = self._dir_cosm + '/dff_badpixelname_' + suffix + '.fits'
+            ifs_flat_manual.sph_ifs_detector_flat_manual(sof_file, ffname, bpname)
             # --------------------------------------------------------------
             # Check if it actually produced something
             # --------------------------------------------------------------
             if not os.path.isfile(self._dir_cosm + '/master_detector_' + suffix + '.fits'):
-                self._error_msg('It seems a master_detector_' + suffix + '_drh.fits file was not produced. Check the log above')
+                self._error_msg('It seems a master_detector_' + suffix + '.fits file was not produced. Check the log above')
         else:
             sys.exit()
+        # --------------------------------------------------------------        
+        # Run the esorex pipeline
+        # --------------------------------------------------------------        
+        # runit = raw_input('\nProceed [Y]/n: ')
+        # if runit != 'n':
+        #     args = ['esorex', 'sph_ifs_master_detector_flat',
+        #             '--ifs.master_detector_flat.save_addprod=TRUE',
+        #             '--ifs.master_detector_flat.outfilename=' + self._dir_cosm + '/master_detector_' + suffix + '_drh.fits',
+        #             '--ifs.master_detector_flat.lss_outfilename=' + self._dir_cosm + '/large_scale_' + suffix + '_drh.fits',
+        #             '--ifs.master_detector_flat.preamp_outfilename=' + self._dir_cosm +   '/preamp_' + suffix + '_drh.fits',
+        #             '--ifs.master_detector_flat.badpixfilename=' + self._dir_cosm + '/dff_badpixelname_' + suffix + '_drh.fits',
+        #             '--ifs.master_detector_flat.lambda=' + str(wave),
+        #             '--ifs.master_detector_flat.smoothing_length=10.0',
+        #             '--ifs.master_detector_flat.smoothing_method=1',
+        #             self._dir_sof + '/' + suffix + '.sof']
+        #     doflat = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
+        #     print '-'*80
+        #     # --------------------------------------------------------------
+        #     # Rename the fits files
+        #     # --------------------------------------------------------------
+        #     flat_list = glob.glob(self._dir_cosm + '/*' + suffix_lamp + '.fits')
+        #     for i in range(len(flat_list)):
+        #         tmp_name = flat_list[i]
+        #         args = ['mv', tmp_name, tmp_name.replace('_drh_'+suffix_lamp, '')]
+        #         mvfits = subprocess.Popen(args).wait()
+        #     # --------------------------------------------------------------
+        #     # Check if it actually produced something
+        #     # --------------------------------------------------------------
+        #     if not os.path.isfile(self._dir_cosm + '/master_detector_' + suffix + '.fits'):
+        #         self._error_msg('It seems a master_detector_' + suffix + '_drh.fits file was not produced. Check the log above')
+        # else:
+        #     sys.exit()
 
     # --------------------------------------------------------------
     # Method for the wavelength calibration
@@ -712,7 +704,10 @@ class IFS(object):
         # --------------------------------------------------------------
         # First, identify the proper files
         # --------------------------------------------------------------
-        fits_wave = self._find_fits('WAVECAL')
+        fits_wave = glob.glob(self._dir_pre_proc + '/SPHER*wave*.fits')
+        print "Will use the following frames for the WAVECAL:"
+        for i in range(len(fits_wave)):
+            print fits_wave[i]
         fits_psf = self._find_fits('FLUX')
         fits_center = self._find_fits('CENTER')
         fits_sci = self._find_fits('SCIENCE')
@@ -738,7 +733,11 @@ class IFS(object):
         Method to run the sph_ifs_science_dr esorex recipe
         """
         f = open(sof_file, 'w')
-        f.write(self._path_to_fits + '/' + filename + '\tIFS_SCIENCE_DR_RAW\n')
+        if self._dir_pre_proc in filename:
+            f.write(filename + '\tIFS_SCIENCE_DR_RAW\n')
+        else:
+            f.write(self._path_to_fits + '/' + filename + '\tIFS_SCIENCE_DR_RAW\n')
+
         f.write(self._dir_cosm + '/master_detector_flat_1020.fits      IFS_MASTER_DFF_LONG1\n')
         f.write(self._dir_cosm + '/master_detector_flat_1230.fits      IFS_MASTER_DFF_LONG2\n')
         f.write(self._dir_cosm + '/master_detector_flat_1300.fits      IFS_MASTER_DFF_LONG3\n')
@@ -753,7 +752,15 @@ class IFS(object):
             f.write(self._dir_cosm + '/master_detector_flat_1550.fits      IFS_MASTER_DFF_LONG4\n')
         f.write(self._dir_cosm + '/master_detector_flat_white.fits     IFS_MASTER_DFF_LONGBB\n')
         f.write(self._dir_cosm + '/master_detector_flat_white.fits     IFS_MASTER_DFF_SHORT\n')
-        f.write(self._dir_cosm + '/dark_cal.fits                       IFS_MASTER_DARK\n')
+        if suffix =='flux':
+            f.write(self._dir_cosm + '/dark_psf.fits                       IFS_MASTER_DARK\n')
+            f.write(self._dir_cosm + '/dark_bpm_psf.fits                       IFS_STATIC_BADPIXELMAP\n')
+        elif suffix == 'center':
+            f.write(self._dir_cosm + '/dark_cen.fits                       IFS_MASTER_DARK\n')
+            f.write(self._dir_cosm + '/dark_bpm_cen.fits                       IFS_STATIC_BADPIXELMAP\n')
+        elif suffix == 'sci':
+            f.write(self._dir_cosm + '/dark_cor.fits                       IFS_MASTER_DARK\n')
+            f.write(self._dir_cosm + '/dark_bpm_cor.fits                       IFS_STATIC_BADPIXELMAP\n')
         f.write(self._dir_cosm + '/wave_calib.fits                     IFS_WAVECALIB\n')
         f.write(self._dir_cosm + '/ifu_flat.fits                     IFS_IFU_FLAT_FIELD\n')
         f.close()
@@ -768,7 +775,10 @@ class IFS(object):
         # Rename and move other files
         mvfiles = glob.glob('SPHER*.*')
         for i in range(len(mvfiles)):
-            tmp_name = mvfiles[i].replace('_', '_' + suffix + '_')
+            if self._dir_pre_proc in filename:
+                tmp_name = mvfiles[i]
+            else:
+                tmp_name = mvfiles[i].replace('_', '_' + suffix + '_')
             args = ['mv', mvfiles[i], self._dir_sci + '/' + tmp_name]
             mvf = subprocess.Popen(args).wait()
         args = ['rm', 'ifs_science_dr.fits']
@@ -802,6 +812,332 @@ class IFS(object):
         f.close()
 
         ifs_preprocess.sph_ifs_preprocess(self._dir_sof + '/preproc.sof', self._dir_pre_proc, coll = True, bkgsub = False, bpcor = True, xtalk = True, colltyp = 'mean', update_pa = False, catg = 'wave')
+
+    # --------------------------------------------------------------
+    # Method to update the center
+    # --------------------------------------------------------------
+    def _get_center(self):
+        """
+        Method to find the center position from the waffle pattern.
+        """
+        # --------------------------------------------------------------
+        # Find the fits files for the center
+        # --------------------------------------------------------------
+        fits_center = glob.glob(self._dir_sci + '/SPHER*center*.fits')
+        id_waffle = 0
+        if len(fits_center) > 1:
+            print 'There are two waffle files:'
+            for i in range(len(fits_center)):
+                print '[' + str(i) + '] ' + fits_center[i]
+            select = raw_input('Which one do you want to use: ')
+            id_waffle = np.int(select) 
+            if id_waffle > len(fits_center)-1:
+                raise ValueError('The ID number is too high')
+        # --------------------------------------------------------------
+        # Get the positions
+        # --------------------------------------------------------------
+        print '\tDetermining the positions of the satellite spots ...'
+        centers = self._center_pos(fits_center[id_waffle])
+        # --------------------------------------------------------------
+        # Write all that in a file
+        # --------------------------------------------------------------
+        f = open(self._dir_sci + '/center_pos.csv', 'w')
+        f.write('#cx,cy\n')
+        for i in range(len(centers)):
+            f.write(str(centers[i,0]) + ',' + str(centers[i,1]) + '\n')
+        f.close()
+
+
+
+    # --------------------------------------------------------------
+    # Method to find the intersection of the 4 spots
+    # --------------------------------------------------------------
+    def _line(self, p1, p2):
+        A = (p1[1] - p2[1])
+        B = (p2[0] - p1[0])
+        C = (p1[0]*p2[1] - p2[0]*p1[1])
+        return A, B, -C
+
+    def _intersection(self, x0, y0, x1, y1, x2, y2, x3, y3):
+        L1 = self._line([x0, y0], [x2, y2])
+        L2 = self._line([x1, y1], [x3, y3])
+        D  = L1[0] * L2[1] - L1[1] * L2[0]
+        Dx = L1[2] * L2[1] - L1[1] * L2[2]
+        Dy = L1[0] * L2[2] - L1[2] * L2[0]
+        if D != 0:
+            x = Dx / D
+            y = Dy / D
+            return x,y
+        else:
+            return False
+    # --------------------------------------------------------------
+    # Method to find the satellite spot
+    # --------------------------------------------------------------
+    def _get_spot(self, cx_int, cy_int, frame, ext = 15., thrs = 3., fwhm = 4.0):
+        sub = frame[cy_int - ext:cy_int + ext, cx_int - ext:cx_int + ext]
+        sources = daofind(sub, fwhm = fwhm, threshold = thrs * np.std(sub))
+        bright = np.argsort(sources['peak'])[-2:]
+        if len(sources) != 1:
+            print 'found ' + str(len(sources)) + ' sources ...'
+        # if len(sources) == 0.:
+        #     plt.figure()
+        #     plt.imshow(sub, origin = 'lower')
+        #     plt.show()
+        cx = (sources['xcentroid'][bright[0]]) + cx_int - ext
+        cy = (sources['ycentroid'][bright[0]]) + cy_int - ext
+        return cx, cy
+    # --------------------------------------------------------------
+    # Method to find the four satellite spots
+    # --------------------------------------------------------------
+    def _center_pos(self, fitsname):
+        """
+        Method to identify the positions of the spots
+        """
+        hdu = fits.open(fitsname)
+        img = hdu[0].data
+        hdr = hdu[0].header
+        hdu.close()
+
+        taille = np.shape(img)[1]
+        nlambda = np.shape(img)[0]
+        pixel   = 7.3  # pixel size [mas]
+
+        wave_min = hdr['HIERARCH ESO DRS IFS MIN LAMBDA']
+        wave_max = hdr['HIERARCH ESO DRS IFS MAX LAMBDA']
+        wave_step = (wave_max - wave_min) / (nlambda-1)
+        wavelength = wave_min + wave_step * np.arange(nlambda * 1.)   
+        waffle_orientation = hdr['HIERARCH ESO OCS WAFFLE ORIENT']
+
+        lsurD  = wavelength * 1.e-6/8.e0 * 180/ np.pi * 3600. *1000. / pixel
+
+        centers  = np.zeros(shape=(nlambda,2))
+        # spot_centers = np.zeros(shape=(nlambda,4,2))
+        # distance = np.zeros(shape=(nlambda,6))
+
+        for i in range(nlambda):
+            frame = img[i,].copy()
+
+            if (waffle_orientation == '+'):
+                offset = np.pi / 4.e0
+            else:
+                offset = 0.e0
+            orient = 57. * np.pi / 180.0 + offset
+            freq   = 10. * np.sqrt(2.) * 0.97
+            ext    = 10.
+
+            if (i == 0):
+                # initial guess at the frame center
+                #  ==> can be modified manually if necessary
+                cx_int = np.int(taille / 2.)
+                cy_int = np.int(taille / 2.)
+            else:
+                # subsequent guess is center of previous channel
+                cx_int = np.int(centers[i-1,0])
+                cy_int = np.int(centers[i-1,1])
+
+            # Spot 0
+            cx0_int = np.int(cx_int + freq * lsurD[i] * np.cos(orient))
+            cy0_int = np.int(cy_int + freq * lsurD[i] * np.sin(orient))
+            cx0, cy0 = self._get_spot(cx0_int, cy0_int, frame)#, fwhm = 4.0)
+
+            # Spot 1
+            cx1_int = np.int(cx_int + freq * lsurD[i] * np.cos(orient + np.pi/2))
+            cy1_int = np.int(cy_int + freq * lsurD[i] * np.sin(orient + np.pi/2))
+            cx1, cy1 = self._get_spot(cx1_int, cy1_int, frame)#, fwhm = lsurD[i])
+
+            
+            # Spot 2
+            cx2_int = np.int(cx_int + freq * lsurD[i] * np.cos(orient + np.pi))
+            cy2_int = np.int(cy_int + freq * lsurD[i] * np.sin(orient + np.pi))
+            cx2, cy2 = self._get_spot(cx2_int, cy2_int, frame)#, fwhm = lsurD[i])
+
+            # Spot 3
+            cx3_int = np.int(cx_int + freq * lsurD[i] * np.cos(orient + 3. * np.pi/2))
+            cy3_int = np.int(cy_int + freq * lsurD[i] * np.sin(orient + 3. * np.pi/2))
+            cx3, cy3 = self._get_spot(cx3_int, cy3_int, frame)#, fwhm = lsurD[i])
+
+            # spot_centers[i,0,:] = cx0, cy0
+            # spot_centers[i,1,:] = cx1, cy1
+            # spot_centers[i,2,:] = cx2, cy2
+            # spot_centers[i,3,:] = cx3, cy3
+            
+            cen = self._intersection(cx0, cy0, cx1, cy1, cx2, cy2, cx3, cy3)
+            if cen:
+                centers[i,] = cen[0], cen[1]
+            else:
+                print 'Could not find the intersection'
+
+        return centers
+
+
+
+    # --------------------------------------------------------------
+    # Method to recenter the science frames
+    # --------------------------------------------------------------
+    def _center_science(self):
+        """
+        Method to find the center position from the waffle pattern.
+        """
+        # --------------------------------------------------------------
+        # Read the center positions
+        # --------------------------------------------------------------
+        data = ascii.read(self._dir_sci + '/center_pos.csv')
+        cx = data['cx']
+        cy = data['cy']
+        nl = len(cx) # This should be the number of wavelength
+        nx = 291 # this will be checked on later
+        # --------------------------------------------------------------
+        # Find the fits files for the center
+        # --------------------------------------------------------------
+        print '\tApplying the center shift to the science data ...'
+        fits_sci = glob.glob(self._dir_sci + '/SPHER*sci*.fits')
+        for j in range(nl):
+            print '\t\tWavelength ' + str(j+1) + ' out of ' + str(nl) + ' ...'
+            cube = np.zeros(shape=(len(fits_sci), nx, nx))
+            para = np.zeros(len(fits_sci))
+            for i in range(len(fits_sci)):
+                hdu = fits.open(fits_sci[i])
+                img =hdu[0].data
+                hdr = hdu[0].header
+                hdu.close()
+                if np.shape(img)[0] != nl:
+                    print 'nl:', nl
+                    print 'img', np.shape(img)[0]
+                    self._error_msg('dimension problem when merging')
+                if ((np.shape(img)[1] != nx) | (np.shape(img)[2] != nx)):
+                    self._error_msg('dimension problem when merging')
+                # --------------------------------------------------------------
+                # Find the fits files for the center
+                # --------------------------------------------------------------
+                ndit, pa_beg, pa_mid, pa_end = ifs_preprocess.header_info(hdr)
+                id_dit = np.int(fits_sci[i].split('_')[-1].replace('.fits',''))
+                para[i] = pa_mid[id_dit]
+                # print para[i]
+
+                frame = img[j,].copy()
+                shiftx = (np.shape(img)[1]-1)/2 - cx[j]
+                shifty = (np.shape(img)[1]-1)/2 - cy[j]
+                frame = scipy.ndimage.interpolation.shift(frame, [shifty,shiftx])
+                cube[i,] = frame
+            # --------------------------------------------------------------
+            # Save the fits file
+            # --------------------------------------------------------------
+            fname = self._dir_ready + '/' + self._starname + '_' + format(j, '03d') + '.fits'
+            fits.writeto(fname, cube, clobber = True)
+            fits.writeto(self._dir_ready + '/para.fits', para, clobber=True)
+
+
+
+
+    # --------------------------------------------------------------
+    # VIP routine for the updated centering.
+    # --------------------------------------------------------------
+    def _vip_centering(self, array):
+        """
+        Method that uses the VIP centering stuff
+        """
+        txt_x = 'X: 145 -> '
+        txt_y = 'Y: 145 -> '
+        cenxy = [145, 145]
+        offset = np.zeros(2)
+        # --------------------------------------------------------------
+        # Do the first search over a large grid
+        # --------------------------------------------------------------
+        dist = 20.
+        # fr_broad = vip.calib.frame_crop(array, 141, cenxy = cenxy, verbose = False)
+        rough = vip.calib.frame_center_radon(array, cropsize = 141, wavelet=False, mask_center=None, 
+            hsize = dist, step=1., nproc=2, verbose = True, plot = True)
+        if ((np.abs(rough[0]) >= dist) | (np.abs(rough[1]) >= dist)):
+            self._error_msg('Increase the box size for the first centering.')
+        cenxy[0] -= np.int(rough[1])
+        cenxy[1] -= np.int(rough[0])
+        offset[0] -= np.int(rough[1])
+        offset[1] -= np.int(rough[0])
+        # --------------------------------------------------------------
+        # Do the second search over a smaller grid.
+        # --------------------------------------------------------------
+        # dist = 2.
+        # fr_broad = vip.calib.frame_crop(array, 141, cenxy = cenxy, verbose = False)
+        # rough = vip.calib.frame_center_radon(fr_broad, cropsize = 131, wavelet=False, mask_center=None, 
+        #     hsize = dist, step=.1, nproc=2, verbose = True, plot = True)
+        # if ((np.abs(rough[0]) >= dist) | (np.abs(rough[1]) >= dist)):
+        #     self._error_msg('Increase the box size for the second centering.')
+        # offset[0] -= rough[1]
+        # offset[1] -= rough[0]
+        print 'Offset: dx = ' + str(offset[0]) + '\t\t dy = ' + str(offset[1])
+        return offset
+
+
+    # --------------------------------------------------------------
+    # Clean the science and center frames with sigma clipping
+    # --------------------------------------------------------------
+    def _clean_sci(self):
+        """
+        Use sigma clipping and masking to clean the SCI and CENTER frames
+        """
+        fits_center = glob.glob(self._dir_sci + '/SPHER*center*.fits')
+        fits_sci = glob.glob(self._dir_sci + '/SPHER*sci*.fits')
+        print "Will clean the following frames:"
+        for i in range(len(fits_center)):
+            print fits_center[i] + '\tCENTER'
+        for i in range(len(fits_sci)):
+            print fits_sci[i] + '\tSCIENCE'
+        # --------------------------------------------------------------
+        # Do the cleaning !
+        # --------------------------------------------------------------
+        runit = raw_input('\nProceed [Y]/n: ')
+        if runit != 'n':
+            self._clean_cube(fits_center[0])
+            # for i in range(len(fits_center)):
+            #     print '\tCleaning CENTER '  +str(i+1) + ' of ' + str(len(fits_center)) + ' ...'
+            #     self._clean_cube(fits_center[i])
+            # for i in range(len(fits_sci)):
+            #     print '\tCleaning SCIENCE '  +str(i+1) + ' of ' + str(len(fits_sci)) + ' ...'
+            #     self._clean_cube(fits_sci[i])
+        else:
+             sys.exit()   
+
+
+    def _clean_cube(self, fitsname):
+        """
+        Read a single fits file and clean it
+        """
+        hdu = fits.open(fitsname)
+        hdr = hdu[0].header
+        img = hdu[0].data
+        hdu.close()
+        # --------------------------------------------------------------
+        # Get the NDIT information
+        # --------------------------------------------------------------
+        frame = img[0,].copy()
+        img[0,] = self._clip_and_mask(frame)
+        # if len(np.shape(img)) == 3:
+        #     for i in range(np.shape(img)[0]):
+        #         frame = img[i,].copy()
+        #         img[i,] = self._clip_and_mask(frame)
+        # else:
+        #     frame = img.copy()
+        #     img = self._clip_and_mask(frame)
+        fname = fitsname.replace('.fits', '_clean.fits')
+        fits.writeto(fname, img, clobber = True, output_verify = "ignore", header = hdr)
+
+
+    def _clip_and_mask(self, frame):
+        """
+        Method to do sigma clipping, create a bad pixel map from the output and 
+        re-evaluate the data for those pixels
+        """
+        # print '\t\t\tSigma clipping: first pass ...'
+        frame_out = ifs_misc.median_clip(frame, 3.5, num_neighbor = 7)
+        sel = (frame == 0.)
+        frame_out[sel] = 0.
+        sel = (frame_out != frame)
+        new_bpm = np.zeros(shape=(np.shape(frame)[0],np.shape(frame)[1]))
+        new_bpm[sel] = 1.
+        # print '\t\t\tMasking and interpolating the frame'
+        frame_out = ifs_misc.sigma_filter(frame, new_bpm, neighbor_box = 6, min_neighbors = 5)
+        return frame_out
+
 
     # --------------------------------------------------------------
     # Method to read the filter curves
@@ -1087,87 +1423,6 @@ class IFS(object):
             self._update_center()
 
 
-    # --------------------------------------------------------------
-    # Method to update the center
-    # --------------------------------------------------------------
-    def _update_center(self):
-        """
-        Method to call VIP and update the centering
-        """
-        # --------------------------------------------------------------
-        # Read the fits file used for the centering
-        # --------------------------------------------------------------
-        hdu = fits.open(self._dir_cosm + '/center_left.fits')
-        if len(np.shape(hdu[0].data)) == 2:
-            waffle_left = hdu[0].data
-        elif len(np.shape(hdu[0].data)) == 3:
-            waffle_left = np.mean(hdu[0].data, axis = 0)
-        else:
-            self._error_msg('Weird shape for the center_left fits file')
-        hdu.close()
-
-        hdu = fits.open(self._dir_cosm + '/center_right.fits')
-        if len(np.shape(hdu[0].data)) == 2:
-            waffle_right = hdu[0].data
-        elif len(np.shape(hdu[0].data)) == 3:
-            waffle_right = np.mean(hdu[0].data, axis = 0)
-        else:
-            self._error_msg('Weird shape for the center_right fits file')
-        hdu.close()
-        # --------------------------------------------------------------
-        # Read the original center
-        # --------------------------------------------------------------
-        hdu = fits.open(self._dir_cosm + '/starcenter.fits')
-        off_left = self._vip_centering(waffle_left)
-        off_right = self._vip_centering(waffle_right)
-        print '-' * 80
-        # --------------------------------------------------------------
-        # Update the starcenter.fits file
-        # --------------------------------------------------------------
-        hdu[1].data['CENTRE_LEFT_X'] += off_left[0]
-        hdu[1].data['CENTRE_LEFT_Y'] += off_left[1]
-        hdu[1].data['CENTRE_RIGHT_X'] += off_right[0]
-        hdu[1].data['CENTRE_RIGHT_Y'] += off_right[1]
-        hdu.writeto(self._dir_cosm + '/starcenter.fits', clobber = True)
-        hdu.close()
-
-    # --------------------------------------------------------------
-    # VIP routine for the updated centering.
-    # --------------------------------------------------------------
-    def _vip_centering(self, array):
-        """
-        Method that uses the VIP centering stuff
-        """
-        txt_x = 'X: 512 -> '
-        txt_y = 'Y: 512 -> '
-        cenxy = [512, 512]
-        offset = np.zeros(2)
-        # --------------------------------------------------------------
-        # Do the first search over a large grid
-        # --------------------------------------------------------------
-        dist = 15.
-        fr_broad = vip.calib.frame_crop(array, 151, cenxy = cenxy, verbose = False)
-        rough = vip.calib.frame_center_radon(fr_broad, cropsize = 141, wavelet=False, mask_center=None, 
-            hsize = dist, step=1., nproc=2, verbose = False, plot = False)
-        if ((np.abs(rough[0]) >= dist) | (np.abs(rough[1]) >= dist)):
-            self._error_msg('Increase the box size for the first centering.')
-        cenxy[0] -= np.int(rough[1])
-        cenxy[1] -= np.int(rough[0])
-        offset[0] -= np.int(rough[1])
-        offset[1] -= np.int(rough[0])
-        # --------------------------------------------------------------
-        # Do the second search over a smaller grid.
-        # --------------------------------------------------------------
-        dist = 2.
-        fr_broad = vip.calib.frame_crop(array, 151, cenxy = cenxy, verbose = False)
-        rough = vip.calib.frame_center_radon(fr_broad, cropsize = 141, wavelet=False, mask_center=None, 
-            hsize = dist, step=.1, nproc=2, verbose = False, plot = False)
-        if ((np.abs(rough[0]) >= dist) | (np.abs(rough[1]) >= dist)):
-            self._error_msg('Increase the box size for the second centering.')
-        offset[0] -= rough[1]
-        offset[1] -= rough[0]
-        print 'Offset: dx = ' + str(offset[0]) + '\t\t dy = ' + str(offset[1])
-        return offset
 
     # --------------------------------------------------------------
     # Method for the science
@@ -1194,8 +1449,7 @@ class IFS(object):
         # f.write(self._dir_cosm + '/instr_flat_badpixels.fits\tIRD_STATIC_BADPIXELMAP\n')
         f.write(self._dir_cosm + '/static_badpixels.fits\tIRD_STATIC_BADPIXELMAP\n')
         f.write(self._dir_cosm + '/irdis_flat.fits\tIRD_FLAT_FIELD\n')
-        if self._corono:
-            f.write(self._dir_cosm + '/starcenter.fits\tIRD_STAR_CENTER\n')
+        f.write(self._dir_cosm + '/starcenter.fits\tIRD_STAR_CENTER\n')
         f.close()
         # --------------------------------------------------------------        
         # Either run the DBI esorex method or the polarimetric one
@@ -1347,6 +1601,12 @@ class IFS(object):
             self._is_ifuflat = True
             print '-'*80
 
+        list_wave = glob.glob(self._dir_pre_proc + '/SPHER*wave*')
+        if (len(list_wave) != 0):
+            print 'Found a pre-processed WAVE frame in \"' + self._dir_pre_proc + '\". Erase if you want to recalculate them.'
+            self._is_wave_preproc = True
+            print '-'*80
+
         list_wave = glob.glob(self._dir_sci + '/SPHER*wave*')
         list_flux = glob.glob(self._dir_sci + '/SPHER*flux*')
         list_center = glob.glob(self._dir_sci + '/SPHER*center*')
@@ -1354,6 +1614,14 @@ class IFS(object):
         if ((len(list_wave) != 0) & (len(list_flux) != 0) & (len(list_center) != 0) & (len(list_sci) != 0)):
             print 'Found WAVE, FLUX, CENTER, and SCIENCE frames in \"' + self._dir_sci + '\". Erase if you want to recalculate them.'
             self._is_science = True
+            print '-'*80
+
+        list_clean = glob.glob(self._dir_pre_proc + '/SPHER*clean.fits')
+        if (len(list_clean) != 0):
+            print 'Found \"cleaned\" fits files in \"' + self._dir_sci + '\". Erase if you want to recalculate them.'
+            self._is_clean = True
+            print '-'*80
+
 
     # --------------------------------------------------------------
     # Method to make a summary of what can be done.
@@ -1635,20 +1903,14 @@ class IFS(object):
         # --------------------------------------------------------------        
         hdu = fits.open(filename + '_right.fits')
         p_r = 0.5 * (hdu[0].header['HIERARCH ESO TEL PARANG END'] + hdu[0].header['HIERARCH ESO TEL PARANG START'])
-        if self._corono:
-            data_right = np.mean(hdu[0].data, axis = 0) / peak_right
-        else:
-            data_right = self._recenter_dao(hdu[0].data)/ peak_right
+        data_right = np.mean(hdu[0].data, axis = 0) / peak_right
         hdu.close()
         # --------------------------------------------------------------        
         # Read the left image
         # --------------------------------------------------------------        
         hdu = fits.open(filename + '_left.fits')
         p_l = 0.5 * (hdu[0].header['HIERARCH ESO TEL PARANG END'] + hdu[0].header['HIERARCH ESO TEL PARANG START'])
-        if self._corono:
-            data_left = np.mean(hdu[0].data, axis = 0) / peak_left
-        else:
-            data_left = self._recenter_dao(hdu[0].data)/ peak_left
+        data_left = np.mean(hdu[0].data, axis = 0) / peak_left
         hdu.close()
         # --------------------------------------------------------------        
         # The total image is the mean of left and right

@@ -124,13 +124,23 @@ def median_clip(array, sigma, num_neighbor = 5):
     
     Adapted from the VIP package sigma_filter method:
     https://github.com/vortex-exoplanet/VIP
-    @carlgogo    
+    @carlgogo
+    Modified by J. Olofsson to use the footprint instead of the size in generic filter.
     """
+    assert type(num_neighbor) is int, "num_neighbor should be an int"
     if not array.ndim == 2:
         raise TypeError("Input array is not two dimensional (frame)\n")
+    if num_neighbor % 2 == 0:
+        raise ValueError("num_neighbor should be an odd integer\n")
+    # footprint will exlcude the central pixel
+    footprint = np.ones(shape=(num_neighbor, num_neighbor))
+    footprint[num_neighbor/2, num_neighbor/2] =0.
+
     values = array.copy()
-    median = generic_filter(array, function=np.median, size=(num_neighbor,num_neighbor), mode="mirror")
-    stdev = generic_filter(array, function=np.std, size=(num_neighbor,num_neighbor), mode="mirror")
+    median = generic_filter(array, function=np.median, size = (num_neighbor,num_neighbor), mode="mirror")
+    stdev = generic_filter(array, function=np.std, size = (num_neighbor,num_neighbor), mode="mirror")
+    # median = generic_filter(array, function=np.median, footprint = footprint, mode="mirror")
+    # stdev = generic_filter(array, function=np.std, footprint = footprint, mode="mirror")
         
     good1 = values > (median - sigma * stdev) 
     good2 = values < (median + sigma * stdev)
@@ -140,6 +150,8 @@ def median_clip(array, sigma, num_neighbor = 5):
     
     bad = np.where(bad1 | bad2) # deviating px indices in either bad1 or bad2
     values[bad] = median[bad] # replace the bad pixels by the median in the box
+    del median
+    del stdev
     return values
     
   
