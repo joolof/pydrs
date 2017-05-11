@@ -5,12 +5,13 @@ import os.path
 import datetime
 import subprocess
 import numpy as np
-import scipy.ndimage
-from astropy.io import fits, ascii
+import ConfigParser
+from scipy import ndimage
 import matplotlib.pyplot as plt
+from astropy.io import fits, ascii
 from astropy.stats import sigma_clip
-from photutils import CircularAperture, CircularAnnulus, aperture_photometry, daofind
 from scipy.signal import fftconvolve, medfilt
+from photutils import CircularAperture, CircularAnnulus, aperture_photometry, daofind
 try:
     import vip
     is_vip = True
@@ -41,25 +42,18 @@ class IRDIS(object):
                        reduced science frames
         + dir_sof: a string for the name of the directory that will contain the files
                    for the esorex recipes
-        + summary: a boolean to plot a quick (to be improved) summary of the observations
         + width: a float for the width, in pixels, of a 2D gaussian to convolve the 
                  science frames [ONLY for DPI observations]
         + kernel_width: an integer for median filtering of all columns of the science 
                         frames, to remove "hot" pixels that were not flagged in the bad
                         pixel map [ONLY for DPI observations]
-        + corono: a boolean to ignore the centering frames (will not apply the
-                  star_centering in the cosmetics for the science frames). Default
-                  is True (i.e., a coronagraph was used).
-
 
     """
-    def __init__(self, starname, path_to_fits, dir_cosmetics = 'cosmetics', dir_science = 'science', dir_sof = 'sof', summary = False, width = 0., kernel_width = 9, corono = True):
+    def __init__(self, starname, path_to_fits, dir_cosmetics = 'cosmetics', dir_science = 'science', dir_sof = 'sof', width = 0., kernel_width = 9):
         # --------------------------------------------------------------        
         # Check the inputs
         # --------------------------------------------------------------        
         assert type(starname) is str, 'The name of the star should be a string'
-        assert type(summary) is bool, 'The variable \'summary\' should be True or False'
-        assert type(corono) is bool, 'The variable \'corono\' should be True or False'
         assert type(dir_cosmetics) is str, 'The name of the cosmetics directory should be a string'
         assert type(dir_science) is str, 'The name of the science directory should be a string'
         assert type(dir_sof) is str, 'The name of the sof directory should be a string'
@@ -76,13 +70,6 @@ class IRDIS(object):
         self._starname = starname
         self._width = width
         self._path_to_fits = path_to_fits
-        self._csv_red = False
-        self._is_dark = False
-        self._is_flat = False
-        self._is_center = False
-        self._is_flux = False
-        self._is_science = False
-        self._corono = corono
         # --------------------------------------------------------------
         # Check for existing directories, if not there try to create them
         # --------------------------------------------------------------
@@ -108,8 +95,6 @@ class IRDIS(object):
         # Check if the star has observations in the directory
         # --------------------------------------------------------------        
         self._check_star()
-        if not self._csv_red:
-            self._error_msg('Could not read the csv file properly.')
         # --------------------------------------------------------------
         # Get the proper mode, MJD and DIT for the science observations
         # --------------------------------------------------------------
@@ -129,23 +114,17 @@ class IRDIS(object):
         print txt
         print '-'*80
         # --------------------------------------------------------------
-        # Plot a summary of the center and science observations
+        # Get the parameters for the data reduction from an input file
         # --------------------------------------------------------------
-        if summary:
-            self._plot_summary()
-        # --------------------------------------------------------------
-        # Check which recipes have been run already
-        # --------------------------------------------------------------
-        self._check_prod()
+        self._todo, self._centering = self._param_file()
         # --------------------------------------------------------------
         # Run the recipes that needs to be run
         # --------------------------------------------------------------
-        if not self._is_dark: self._master_dark()
-        if not self._is_flat: self._flat()
-        if self._corono:
-            if not self._is_center: self._center()
-        if not self._is_flux: self._flux()
-        if not self._is_science: self._science()
+        if not self._todo['dark']: self._master_dark()
+        if not self._todo['flat']: self._flat()
+        if not self._todo['center']: self._center()
+        if not self._todo['flux']: self._flux()
+        if not self._todo['science']: self._science()
         # --------------------------------------------------------------
         # Merge the frames if necessary
         # --------------------------------------------------------------
@@ -159,6 +138,93 @@ class IRDIS(object):
     # --------------------------------------------------------------
     def _integrate(self,x,fx):
         return np.sum( (x[:-1] - x[1:]) * (fx[:-1] + fx[1:]) * 0.5)
+
+    def _param_file(self):
+        """
+        Check if there is a parameter file, if not create a default one.
+        """
+        # --------------------------------------------------------------
+        # If there is no param file, create one with the default value
+        # --------------------------------------------------------------
+        if not os.path.isfile('input.in'):
+            f = open('input.in', 'w')
+            f.write('[REDUCE]\n')
+            f.write('dark:\tTrue\n')
+            f.write('flat:\tTrue\n')
+            f.write('center:\tTrue\n')
+            f.write('flux:\tTrue\n')
+            f.write('science:\tTrue\n')
+            f.write('[CENTERING]\n')
+            f.write('frames:\tall\n')
+            f.write('method:\tmedian\n')
+            f.write('radon:\tFalse\n')
+            f.close()
+            self._error_msg('Created a param file \"input.in\" in the local directory.\n Check it to change the default value.')
+        # --------------------------------------------------------------
+        # If there is a param file, read it and return two dictionaries.
+        # --------------------------------------------------------------
+        else:
+            todo, centering = {}, {}
+            parser = ConfigParser.SafeConfigParser()
+            parser.read('input.in')
+            todo['dark'] = self._str2bool(parser.get('REDUCE', 'dark'))
+            todo['flat'] = self._str2bool(parser.get('REDUCE', 'flat'))
+            todo['center'] = self._str2bool(parser.get('REDUCE', 'center'))
+            todo['flux'] = self._str2bool(parser.get('REDUCE', 'flux'))
+            todo['science'] = self._str2bool(parser.get('REDUCE', 'science'))
+            # --------------------------------------------------------------
+            # I still need to check if there are indeed the proper calibration files.
+            # --------------------------------------------------------------
+            if not os.path.isfile(self._dir_cosm + '/master_dark.fits'):
+                todo['dark'] = False
+            if not os.path.isfile(self._dir_cosm + '/irdis_flat.fits'):
+                todo['flat'] = False
+            if not (os.path.isfile(self._dir_cosm + '/psf_left.fits') & os.path.isfile(self._dir_cosm + '/psf_right.fits')):
+                todo['flux'] = False
+            if not os.path.isfile(self._dir_cosm + '/starcenter.fits'):
+                todo['center'] = False
+            # --------------------------------------------------------------
+            # I need to propagate the boolean to the next steps.
+            # For instance if I recalculate the center, I have to recalculate
+            # the science frames
+            # --------------------------------------------------------------
+            if not todo['dark']:
+                todo['flat'] = False
+            if not todo['flat']:
+                todo['center'] = False
+            if not todo['center']:
+                todo['science'] = False
+            # --------------------------------------------------------------
+            # Read the default value for the centering method and frames
+            # --------------------------------------------------------------
+            if parser.get('CENTERING', 'radon') == 'True':
+                centering['radon'] = True
+            elif parser.get('CENTERING', 'radon') == 'False':
+                centering['radon'] = False
+            else:
+                self._error_msg('The \"radon\" value in the param file should be True of False.')                    
+            centering['method'] = parser.get('CENTERING', 'method')
+            centering['frames'] = parser.get('CENTERING', 'frames')
+            if centering['frames'] != 'all':
+                centering['frames'] = int(centering['frames'])
+            return todo, centering
+
+
+    # --------------------------------------------------------------
+    # String to boolean
+    # --------------------------------------------------------------
+    def _str2bool(self, char):
+        """
+        I have to "reverse" the boolean. is_dark for instance will be
+        True if there is a Dark. To recompute the dark, I set it to True in
+        the input file, so I have to set the variable to False
+        """
+        if char == "True":
+            return False
+        elif char =='False':
+            return True
+        else:
+            self._error_msg('The entry should be either True or False')
 
     # --------------------------------------------------------------
     # Method for the master dark
@@ -185,9 +251,6 @@ class IRDIS(object):
         runit = raw_input('\nProceed [Y]/n: ')
         if runit != 'n':
             args = ['esorex', 'sph_ird_master_dark', 
-                    # '--ird.master_dark.clean_mean.reject_low=0',
-                    # '--ird.master_dark.clean_mean.reject_high=0',
-                    # '--ird.master_dark.sigma_clip=1.0',
                     '--ird.master_dark.outfilename=' + self._dir_cosm + '/master_dark.fits', 
                     '--ird.master_dark.save_addprod=TRUE',
                     '--ird.master_dark.badpixfilename=' + self._dir_cosm + '/static_badpixels.fits',
@@ -302,11 +365,16 @@ class IRDIS(object):
             print 'Skipping flux calibration in DPI mode'
             print '-'*80
         else:
+            print ' '
+            print '-'*80
+            print 'Check if the background should have the same ND filter as the FLUX'
+            print '-'*80
+            print ' '
             # --------------------------------------------------------------
             # First, identify the proper files
             # --------------------------------------------------------------
             fits_flux = self._find_fits('FLUX', verbose = True)
-            fits_bkg = self._find_fits('BACKGROUND', verbose = False)
+            fits_bkg = self._find_fits('BACKGROUND', verbose = True)
             # --------------------------------------------------------------
             # Get the average of the flux measurements
             # --------------------------------------------------------------
@@ -325,7 +393,7 @@ class IRDIS(object):
                     if self._nd[idfit] != f_nd: self._error_msg('Different ND filters in the flux measurements')
                 hdu.close()
             flux = flux / np.float(len(fits_flux))
-            txt = 'Found ' + str(len(fits_flux)) + ' FLUX (' + f_nd + ')'
+            txt = 'Found ' + str(len(fits_flux)) + ' FLUX (' + str(f_dit) +'sec / '+ f_filt + 'filter / ' + f_nd + 'ND)'
             # --------------------------------------------------------------
             # Get the average of the background measurements
             # --------------------------------------------------------------
@@ -414,13 +482,13 @@ class IRDIS(object):
             # --------------------------------------------------------------
             hdu = fits.PrimaryHDU(data = psf0)
             hdu.header.append(('Peak', b0, 'Peak of the psf'),end=True)
-            hdu.writeto(fitsname0, clobber = True)
+            hdu.writeto(fitsname0, overwrite = True)
             # --------------------------------------------------------------
             # Save the second one
             # --------------------------------------------------------------
             hdu = fits.PrimaryHDU(data = psf1)
             hdu.header.append(('Peak', b1, 'Peak of the psf'),end=True)
-            hdu.writeto(fitsname1, clobber = True)
+            hdu.writeto(fitsname1, overwrite = True)
 
     # --------------------------------------------------------------        
     # Method to get the observations date
@@ -449,96 +517,145 @@ class IRDIS(object):
         # --------------------------------------------------------------        
         fits_center = self._find_fits('CENTER')
         # --------------------------------------------------------------        
-        # Select the proper center
-        # --------------------------------------------------------------        
-        id_waffle = 0
-        if len(fits_center) > 1:
-            print 'There are two waffle files:'
-            for i in range(len(fits_center)):
-                print '[' + str(i) + '] ' + fits_center[i]
-            select = raw_input('Which one do you want to use: ')
-            id_waffle = np.int(select) 
-            if id_waffle > len(fits_center)-1:
-                raise ValueError('The ID number is too high')
-        # --------------------------------------------------------------        
-        # Write the SOF file
-        # --------------------------------------------------------------        
-        f = open(self._dir_sof + '/star_center.sof', 'w')
-        f.write(self._path_to_fits + '/' + fits_center[id_waffle] + '\tIRD_STAR_CENTER_WAFFLE_RAW\n')
-        f.write(self._dir_cosm + '/static_badpixels.fits\tIRD_STATIC_BADPIXELMAP\n')
-        f.write(self._dir_cosm + '/master_dark.fits\tIRD_MASTER_DARK\n')
-        f.write(self._dir_cosm + '/irdis_flat.fits\tIRD_FLAT_FIELD\n')
-        f.close()
-        # --------------------------------------------------------------        
         # Run the esorex pipeline
         # --------------------------------------------------------------        
         runit = raw_input('\nProceed [Y]/n: ')
         if runit != 'n':
-            args = ['esorex', 'sph_ird_star_center', 
-                    '--ird.star_center.outfilename=' + self._dir_cosm + '/starcenter.fits',
-                    self._dir_sof + '/star_center.sof']
-            star_c = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
             # --------------------------------------------------------------        
             # Run esorex science_dbi to clean up the center frame
             # --------------------------------------------------------------        
-            f = open(self._dir_sof + '/center_clean.sof', 'w')
-            f.write(self._path_to_fits + '/' + fits_center[id_waffle] + '\tIRD_SCIENCE_DBI_RAW\n')
-            f.write(self._dir_cosm + '/master_dark.fits\tIRD_MASTER_DARK\n')
-            f.write(self._dir_cosm + '/static_badpixels.fits\tIRD_STATIC_BADPIXELMAP\n')
-            f.write(self._dir_cosm + '/irdis_flat.fits\tIRD_FLAT_FIELD\n')
-            f.write(self._dir_cosm + '/starcenter.fits\tIRD_STAR_CENTER\n')
-            f.close()
-            args = ['esorex', 'sph_ird_science_dbi',
-                        self._dir_sof + '/center_clean.sof']
-            sci_dbi = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
-            # --------------------------------------------------------------        
-            # Clean up the fits files
-            # --------------------------------------------------------------        
-            # Rename left file
-            mv_left = glob.glob('SPHER*_left.fits')
-            args = ['mv', mv_left[0], self._dir_cosm + '/center_left.fits']
-            mvfits = subprocess.Popen(args).wait()
-            # Rename right file
-            mv_right = glob.glob('SPHER*_right.fits')
-            args = ['mv', mv_right[0], self._dir_cosm + '/center_right.fits']
-            mvfits = subprocess.Popen(args).wait()
-            # Changing for save the *.txt of the center images ---> My attempt
-            mv_txt = glob.glob('SPHER*fctable*txt')
-            args = ['mv', mv_txt[0], self._dir_cosm + '/cor.txt']
-            mvtxt = subprocess.Popen(args).wait()
-            # Remove other files
-            rmfiles = glob.glob('SPHER*.*')
-            for i in range(len(rmfiles)):
-                args = ['rm', rmfiles[i]]
-                rmtxt = subprocess.Popen(args).wait()
-            args = ['rm', 'science_dbi.fits']
-            rmtxt = subprocess.Popen(args).wait()
+            if type(self._centering['frames']) is int:
+                self._clean_center(fits_center[self._centering['frames']], radon_transform = self._centering['radon'])
+            elif (self._centering['frames'] == 'all'):
+                for i in range(len(fits_center)):
+                    self._clean_center(fits_center[i], indice = i, radon_transform = self._centering['radon'])
+                # --------------------------------------------------------------        
+                # If I take the median value, update the starcenter
+                # --------------------------------------------------------------        
+                if self._centering['method'] == 'median':
+                    self._median_center(len(fits_center))
             print '-'*80
             # --------------------------------------------------------------
             # Check if it actually produced something
             # --------------------------------------------------------------
-            if not os.path.isfile(self._dir_cosm + '/starcenter.fits'):
+            if len(glob.glob(self._dir_cosm + '/starcenter*.fits')) == 0:
                 self._error_msg('It seems a starcenter.fits file was not produced. Check the log above')
         else:
             sys.exit()
+
+
+    def _median_center(self, nframes):
+        """
+        Compute the median of all the centering frames and save it in a new
+        starcenter.fits file
+        """
+        offsets = np.zeros(shape=(nframes, 2, 2))
+        for i in range(nframes):
+            hdu = fits.open(self._dir_cosm + '/starcenter_' + str(i) + '.fits')
+            offsets[i,0,0] = hdu[1].data['CENTRE_LEFT_X']
+            offsets[i,0,1] = hdu[1].data['CENTRE_LEFT_Y']
+            offsets[i,1,0] = hdu[1].data['CENTRE_RIGHT_X']
+            offsets[i,1,1] = hdu[1].data['CENTRE_RIGHT_Y']
+            hdu.close()
+        # --------------------------------------------------------------        
+        # Copy and update the first starcenter file
+        # --------------------------------------------------------------        
+        hdu = fits.open(self._dir_cosm + '/starcenter_0.fits')
+        hdu[1].data['CENTRE_LEFT_X'] = np.mean(offsets[:,0,0])
+        hdu[1].data['CENTRE_LEFT_Y'] = np.mean(offsets[:,0,1])
+        hdu[1].data['CENTRE_RIGHT_X'] = np.mean(offsets[:,1,0])
+        hdu[1].data['CENTRE_RIGHT_Y'] = np.mean(offsets[:,1,1])
+        hdu.writeto(self._dir_cosm + '/starcenter.fits', overwrite = True)
+        hdu.close()
+
+
+    # --------------------------------------------------------------
+    # Method to run the esorex to clean the center frames
+    # --------------------------------------------------------------
+    def _clean_center(self, fitsname, indice = -1, radon_transform = False):
+        """
+        Run esorex to apply the cosmetics to the center frames
+        """
+        # --------------------------------------------------------------        
+        # Define some naming conventions
+        # --------------------------------------------------------------        
+        if indice == -1:
+            out_recipe = '/starcenter.fits'
+            out_left = '/center_left.fits'
+            out_right = '/center_right.fits'
+            out_cor = '/cor.txt'
+        else:
+            out_recipe = '/starcenter_' + str(indice) + '.fits'
+            out_left = '/center_left_'+str(indice)+'.fits'
+            out_right = '/center_right_'+str(indice)+'.fits'
+            out_cor = '/cor_'+str(indice)+'.txt'
+        # --------------------------------------------------------------        
+        # Derive the star center for the centering frames
+        # --------------------------------------------------------------        
+        f = open(self._dir_sof + '/star_center.sof', 'w')
+        f.write(self._path_to_fits + '/' + fitsname + '\tIRD_STAR_CENTER_WAFFLE_RAW\n')
+        f.write(self._dir_cosm + '/static_badpixels.fits\tIRD_STATIC_BADPIXELMAP\n')
+        f.write(self._dir_cosm + '/master_dark.fits\tIRD_MASTER_DARK\n')
+        f.write(self._dir_cosm + '/irdis_flat.fits\tIRD_FLAT_FIELD\n')
+        f.close()
+        args = ['esorex', 'sph_ird_star_center', 
+                '--ird.star_center.outfilename=' + self._dir_cosm + out_recipe,
+                self._dir_sof + '/star_center.sof']
+        star_c = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
+        # --------------------------------------------------------------        
+        # Apply the cosmetics to the raw center frame.
+        # I use the same centering frame for the STAR_CENTER calibration. To be checked.
+        # --------------------------------------------------------------        
+        f = open(self._dir_sof + '/center_clean.sof', 'w')
+        f.write(self._path_to_fits + '/' + fitsname + '\tIRD_SCIENCE_DBI_RAW\n')
+        f.write(self._dir_cosm + '/master_dark.fits\tIRD_MASTER_DARK\n')
+        f.write(self._dir_cosm + '/static_badpixels.fits\tIRD_STATIC_BADPIXELMAP\n')
+        f.write(self._dir_cosm + '/irdis_flat.fits\tIRD_FLAT_FIELD\n')
+        f.write(self._dir_cosm + out_recipe + '\tIRD_STAR_CENTER\n')
+        f.close()
+        args = ['esorex', 'sph_ird_science_dbi',
+                    self._dir_sof + '/center_clean.sof']
+        sci_dbi = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
+        # --------------------------------------------------------------        
+        # Clean up the fits files
+        # --------------------------------------------------------------        
+        # Rename left file
+        mv_left = glob.glob('SPHER*_left.fits')
+        args = ['mv', mv_left[0], self._dir_cosm + out_left]
+        mvfits = subprocess.Popen(args).wait()
+        # Rename right file
+        mv_right = glob.glob('SPHER*_right.fits')
+        args = ['mv', mv_right[0], self._dir_cosm + out_right]
+        mvfits = subprocess.Popen(args).wait()
+        # Changing for save the *.txt of the center images ---> My attempt
+        mv_txt = glob.glob('SPHER*fctable*txt')
+        args = ['mv', mv_txt[0], self._dir_cosm + out_cor]
+        mvtxt = subprocess.Popen(args).wait()
+        # Remove other files
+        rmfiles = glob.glob('SPHER*.*')
+        for i in range(len(rmfiles)):
+            args = ['rm', rmfiles[i]]
+            rmtxt = subprocess.Popen(args).wait()
+        args = ['rm', 'science_dbi.fits']
+        rmtxt = subprocess.Popen(args).wait()
         # --------------------------------------------------------------
         # If VIP could be imported then update the centering
         # --------------------------------------------------------------
         if is_vip:
-            self._update_center()
-
+            if radon_transform:
+                self._update_center(out_left, out_right, out_recipe)
 
     # --------------------------------------------------------------
     # Method to update the center
     # --------------------------------------------------------------
-    def _update_center(self):
+    def _update_center(self, leftname, rightname, maincenter):
         """
         Method to call VIP and update the centering
         """
         # --------------------------------------------------------------
         # Read the fits file used for the centering
         # --------------------------------------------------------------
-        hdu = fits.open(self._dir_cosm + '/center_left.fits')
+        hdu = fits.open(self._dir_cosm + leftname)
         if len(np.shape(hdu[0].data)) == 2:
             waffle_left = hdu[0].data
         elif len(np.shape(hdu[0].data)) == 3:
@@ -547,7 +664,7 @@ class IRDIS(object):
             self._error_msg('Weird shape for the center_left fits file')
         hdu.close()
 
-        hdu = fits.open(self._dir_cosm + '/center_right.fits')
+        hdu = fits.open(self._dir_cosm + rightname)
         if len(np.shape(hdu[0].data)) == 2:
             waffle_right = hdu[0].data
         elif len(np.shape(hdu[0].data)) == 3:
@@ -558,7 +675,7 @@ class IRDIS(object):
         # --------------------------------------------------------------
         # Read the original center
         # --------------------------------------------------------------
-        hdu = fits.open(self._dir_cosm + '/starcenter.fits')
+        hdu = fits.open(self._dir_cosm + maincenter)
         off_left = self._vip_centering(waffle_left)
         off_right = self._vip_centering(waffle_right)
         print '-' * 80
@@ -569,7 +686,7 @@ class IRDIS(object):
         hdu[1].data['CENTRE_LEFT_Y'] += off_left[1]
         hdu[1].data['CENTRE_RIGHT_X'] += off_right[0]
         hdu[1].data['CENTRE_RIGHT_Y'] += off_right[1]
-        hdu.writeto(self._dir_cosm + '/starcenter.fits', clobber = True)
+        hdu.writeto(self._dir_cosm + maincenter, overwrite = True)
         hdu.close()
 
     # --------------------------------------------------------------
@@ -589,7 +706,7 @@ class IRDIS(object):
         dist = 15.
         fr_broad = vip.calib.frame_crop(array, 151, cenxy = cenxy, verbose = False)
         rough = vip.calib.frame_center_radon(fr_broad, cropsize = 141, wavelet=False, mask_center=None, 
-            hsize = dist, step=1., nproc=2, verbose = False, plot = False)
+            hsize = dist, step=1., nproc=2, verbose = False, plot = True)
         if ((np.abs(rough[0]) >= dist) | (np.abs(rough[1]) >= dist)):
             self._error_msg('Increase the box size for the first centering.')
         cenxy[0] -= np.int(rough[1])
@@ -602,7 +719,7 @@ class IRDIS(object):
         dist = 2.
         fr_broad = vip.calib.frame_crop(array, 151, cenxy = cenxy, verbose = False)
         rough = vip.calib.frame_center_radon(fr_broad, cropsize = 141, wavelet=False, mask_center=None, 
-            hsize = dist, step=.1, nproc=2, verbose = False, plot = False)
+            hsize = dist, step=.1, nproc=2, verbose = False, plot = True)
         if ((np.abs(rough[0]) >= dist) | (np.abs(rough[1]) >= dist)):
             self._error_msg('Increase the box size for the second centering.')
         offset[0] -= rough[1]
@@ -622,63 +739,101 @@ class IRDIS(object):
         # --------------------------------------------------------------        
         fits_science = self._find_fits('SCIENCE')
         # --------------------------------------------------------------        
-        # Write the SOF file
+        # I will run esorex for each individual frames.
         # --------------------------------------------------------------        
-        f = open(self._dir_sof + '/science.sof', 'w')
-        for i in range(len(fits_science)):
-            if self.obs_mode == 'POLARIMETRY':
-                f.write(self._path_to_fits + '/' + fits_science[i] + '\tIRD_SCIENCE_IMAGING_RAW\n')
-            else:
-                f.write(self._path_to_fits + '/' + fits_science[i] + '\tIRD_SCIENCE_DBI_RAW\n')
-            # f.write(self._path_to_fits + '/' + fits_science[i] + '\tIRD_SCIENCE_DBI_RAW\n')
-        f.write(self._dir_cosm + '/master_dark.fits\tIRD_MASTER_DARK\n')
-        # f.write(self._dir_cosm + '/instr_flat_badpixels.fits\tIRD_STATIC_BADPIXELMAP\n')
-        f.write(self._dir_cosm + '/static_badpixels.fits\tIRD_STATIC_BADPIXELMAP\n')
-        f.write(self._dir_cosm + '/irdis_flat.fits\tIRD_FLAT_FIELD\n')
-        if self._corono:
+        runit = raw_input('\nProceed [Y]/n: ')
+        if runit != 'n':
+            f = open(self._dir_sof + '/science.sof', 'w')
+            for i in range(len(fits_science)):
+                if self.obs_mode == 'POLARIMETRY':
+                    f.write(self._path_to_fits + '/' + fits_science[i] + '\tIRD_SCIENCE_IMAGING_RAW\n')
+                    # f.write(self._path_to_fits + '/' + fits_science[i] + '\tIRD_SCIENCE_DPI_RAW\n')
+                else:
+                    f.write(self._path_to_fits + '/' + fits_science[i] + '\tIRD_SCIENCE_DBI_RAW\n')
+            f.write(self._dir_cosm + '/master_dark.fits\tIRD_MASTER_DARK\n')
+            f.write(self._dir_cosm + '/static_badpixels.fits\tIRD_STATIC_BADPIXELMAP\n')
+            f.write(self._dir_cosm + '/irdis_flat.fits\tIRD_FLAT_FIELD\n')
             f.write(self._dir_cosm + '/starcenter.fits\tIRD_STAR_CENTER\n')
-        f.close()
-        # --------------------------------------------------------------        
-        # Either run the DBI esorex method or the polarimetric one
-        # --------------------------------------------------------------        
-        if self.obs_mode == 'POLARIMETRY':
-            self._esorex_dpi()
+            f.close()
+            # --------------------------------------------------------------        
+            # Either run the DBI esorex method or the polarimetric one
+            # --------------------------------------------------------------        
+            if self.obs_mode == 'POLARIMETRY':
+                args = ['esorex', 'sph_ird_science_imaging', 
+                        self._dir_sof + '/science.sof']
+            else:
+                args = ['esorex', 'sph_ird_science_dbi', 
+                        self._dir_sof + '/science.sof']
+            sci_dbi = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
+            # --------------------------------------------------------------        
+            # Clean up the fits files once I ran esorex for all the frames
+            # --------------------------------------------------------------        
+            mvfiles = glob.glob('SPHER*.fits')
+            for i in range(len(mvfiles)):
+                args = ['mv', mvfiles[i], self._dir_sci + '/']
+                mvfits = subprocess.Popen(args).wait()
+            mvfiles = glob.glob('SPHER*.txt')
+            for i in range(len(mvfiles)):
+                args = ['rm', mvfiles[i]]
+                rmtxt = subprocess.Popen(args).wait()
+
+
+    # --------------------------------------------------------------        
+    # Method for the DPI data reduction
+    # --------------------------------------------------------------        
+    def _esorex_dpi(self):
+        """
+        Method to run the esorex recipe on the DPI observations
+        (using the science_imaging recipe.)
+        """
+        runit = raw_input('\nProceed [Y]/n: ')
+        if runit != 'n':
+            # args = ['esorex', 'sph_ird_science_imaging', 
+            args = ['esorex', 'sph_ird_science_dpi', 
+                        # '--ird.science_dbi.save_addprod=TRUE',
+                        self._dir_sof + '/science.sof']
+            sci_dbi = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
+            # --------------------------------------------------------------        
+            # Clean up the fits files
+            # --------------------------------------------------------------        
+            mvfiles = glob.glob('SPHER*.fits')
+            for i in range(len(mvfiles)):
+                args = ['mv', mvfiles[i], self._dir_sci + '/']
+                mvfits = subprocess.Popen(args).wait()
+            mvfiles = glob.glob('SPHER*.txt')
+            for i in range(len(mvfiles)):
+                args = ['rm', mvfiles[i]]
+                rmtxt = subprocess.Popen(args).wait()
+            print '-'*80
         else:
-            self._esorex_dbi()
-        # self._esorex_dbi()
-
-    # --------------------------------------------------------------
-    # Method to plot a summary
-    # --------------------------------------------------------------
-    def _plot_summary(self):
+            sys.exit()
+    # --------------------------------------------------------------        
+    # Method for the DBI data reduction
+    # --------------------------------------------------------------        
+    def _esorex_dbi(self):
         """
-        Method to plot a summary of the center and science frames
+        Method to run the esorex recipe on the DBI observations
         """
-        # --------------------------------------------------------------
-        # Get the science fits files
-        # --------------------------------------------------------------
-        fits_science = self._find_fits('SCIENCE', blacklist = False, verbose = False)
-        date_science = [] 
-        for i in range(len(fits_science)):
-            date_science.append(self._get_obs_time(fits_science[i]))
-        date_science = np.array(date_science)
-        # --------------------------------------------------------------
-        # Get the center fits files
-        # --------------------------------------------------------------
-        fits_center = self._find_fits('CENTER', blacklist = False, verbose = False)
-        date_center = []
-        for i in range(len(fits_center)):
-            date_center.append(self._get_obs_time(fits_center[i]))
-        date_center = np.array(date_center)
-
-        plt.figure()
-        plt.plot(date_science, np.zeros(len(fits_science)), 'wo')
-        plt.plot(date_center, np.ones(len(fits_center)), 'ro')
-        for i in range(len(fits_center)):
-            plt.plot([date_center[i], date_center[i]], [0.,1],lw=1,color='r')
-        plt.ylim(-0.1, 1.1)
-
-        plt.show()
+        runit = raw_input('\nProceed [Y]/n: ')
+        if runit != 'n':
+            args = ['esorex', 'sph_ird_science_dbi', 
+                        self._dir_sof + '/science.sof']
+            # sci_dbi = subprocess.Popen(args).wait()
+            sci_dbi = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
+            # --------------------------------------------------------------        
+            # Clean up the fits files
+            # --------------------------------------------------------------        
+            mvfiles = glob.glob('SPHER*.fits')
+            for i in range(len(mvfiles)):
+                args = ['mv', mvfiles[i], self._dir_sci + '/']
+                mvfits = subprocess.Popen(args).wait()
+            mvfiles = glob.glob('SPHER*.txt')
+            for i in range(len(mvfiles)):
+                args = ['rm', mvfiles[i]]
+                rmtxt = subprocess.Popen(args).wait()
+            print '-'*80
+        else:
+            sys.exit()
 
     # --------------------------------------------------------------
     # Method to get the STOKES keywords from the fits files. Since 
@@ -742,16 +897,16 @@ class IRDIS(object):
         # Some parameters for the optimization
         # --------------------------------------------------------------
         # For the instrumental polarization
-        instPolMin = 5
-        instPolMax =  30
-        instPolStep = 0.5
+        instPolMin = 0.2
+        instPolMax =  10
+        instPolStep = 0.2
         # For the HWP plate
         thetaMin = -10.0
         thetaMax = 10.0
-        thetaStep = 0.01
+        thetaStep = 0.1
         # For the plot
-        vmin = -0.5
-        vmax = 5.5
+        vmin = -7.5
+        vmax = 7.5
         # --------------------------------------------------------------
         # Get the Stokes parameters
         # --------------------------------------------------------------
@@ -762,7 +917,7 @@ class IRDIS(object):
         print 'Will use the following frames:'
         for i in range(len(fitsname)):
             print fitsname[i] + '\t' + stokes[i] + '\t' + date[i].split('T')[1]
-        txt = '\n(create a \'DPI_blacklist\' if you want to exclude some frames.)'
+        txt = '\n(create a \'DPI_blacklist.txt\' if you want to exclude some frames.)'
         print txt
         print '-'*80
         runit = raw_input('\nProceed [Y]/n: ')
@@ -790,15 +945,21 @@ class IRDIS(object):
             # --------------------------------------------------------------
             hdu = fits.open(fitsfile+'_left.fits')
             stokes = hdu[0].header['HIERARCH ESO OCS DPI H2RT STOKES']
+            derot = hdu[0].header['HIERARCH ESO INS4 DROT2 POSANG']
             ordinary = self._clean_frame(hdu[0].data) #np.mean(hdu[0].data, axis=0)
             hdu.close()
+            if derot != 0.:
+                ordinary = ndimage.rotate(ordinary, -1.0*derot, reshape=False)
             # --------------------------------------------------------------
             # Read the right frame
             # --------------------------------------------------------------
             hdu = fits.open(fitsfile+'_right.fits')
             stokes = hdu[0].header['HIERARCH ESO OCS DPI H2RT STOKES']
+            derot = hdu[0].header['HIERARCH ESO INS4 DROT2 POSANG']
             extraord = self._clean_frame(hdu[0].data) #np.mean(hdu[0].data, axis=0)
             hdu.close()
+            if derot != 0.:
+                extraord = ndimage.rotate(extraord, -1.0*derot, reshape=False)
             # --------------------------------------------------------------
             # Remove some NaN
             # --------------------------------------------------------------
@@ -942,10 +1103,10 @@ class IRDIS(object):
         # Save fits files
         # --------------------------------------------------------------
         print 'Writing fits files \'Qphi.fits\' \'Uphi.fits\' ...'
-        fits.writeto('Qphi.fits', self.Qphi, clobber = True)
-        fits.writeto('Uphi.fits', self.Uphi, clobber = True)
-        fits.writeto('Qmean.fits', Q_mean, clobber = True)
-        fits.writeto('Umean.fits', U_mean, clobber = True)
+        fits.writeto('Qphi.fits', self.Qphi, overwrite = True)
+        fits.writeto('Uphi.fits', self.Uphi, overwrite = True)
+        fits.writeto('Qmean.fits', Q_mean, overwrite = True)
+        fits.writeto('Umean.fits', U_mean, overwrite = True)
         print '-'*80
 
     # --------------------------------------------------------------        
@@ -957,64 +1118,6 @@ class IRDIS(object):
         """
         phot_table = aperture_photometry(data, ring, method='exact')
         return phot_table['aperture_sum']
-
-
-    # --------------------------------------------------------------        
-    # Method for the DPI data reduction
-    # --------------------------------------------------------------        
-    def _esorex_dpi(self):
-        """
-        Method to run the esorex recipe on the DPI observations
-        (using the science_imaging recipe.)
-        """
-        runit = raw_input('\nProceed [Y]/n: ')
-        if runit != 'n':
-            args = ['esorex', 'sph_ird_science_imaging', 
-                        self._dir_sof + '/science.sof']
-            sci_dbi = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
-            # --------------------------------------------------------------        
-            # Clean up the fits files
-            # --------------------------------------------------------------        
-            mvfiles = glob.glob('SPHER*.fits')
-            for i in range(len(mvfiles)):
-                args = ['mv', mvfiles[i], self._dir_sci + '/']
-                mvfits = subprocess.Popen(args).wait()
-            mvfiles = glob.glob('SPHER*.txt')
-            for i in range(len(mvfiles)):
-                args = ['rm', mvfiles[i]]
-                rmtxt = subprocess.Popen(args).wait()
-            print '-'*80
-        else:
-            sys.exit()
-    # --------------------------------------------------------------        
-    # Method for the DBI data reduction
-    # --------------------------------------------------------------        
-    def _esorex_dbi(self):
-        """
-        Method to run the esorex recipe on the DBI observations
-        """
-        runit = raw_input('\nProceed [Y]/n: ')
-        if runit != 'n':
-            args = ['esorex', 'sph_ird_science_dbi', 
-                        '--ird.science_dbi.use_adi=FALSE', 
-                        '--ird.science_dbi.use_sdi=FALSE',
-                        self._dir_sof + '/science.sof']
-            # sci_dbi = subprocess.Popen(args).wait()
-            sci_dbi = subprocess.Popen(args, stdout = open(os.devnull, 'w')).wait()
-            # --------------------------------------------------------------        
-            # Clean up the fits files
-            # --------------------------------------------------------------        
-            mvfiles = glob.glob('SPHER*.fits')
-            for i in range(len(mvfiles)):
-                args = ['mv', mvfiles[i], self._dir_sci + '/']
-                mvfits = subprocess.Popen(args).wait()
-            mvfiles = glob.glob('SPHER*.txt')
-            for i in range(len(mvfiles)):
-                args = ['rm', mvfiles[i]]
-                rmtxt = subprocess.Popen(args).wait()
-            print '-'*80
-        else:
-            sys.exit()
 
 
     # --------------------------------------------------------------
@@ -1036,45 +1139,6 @@ class IRDIS(object):
             return bl_list
         else:
             return bl_list
-
-
-    # --------------------------------------------------------------
-    # Method to check if there are the necessary producs
-    # --------------------------------------------------------------
-    def _check_prod(self):
-        """
-        Check if the different recipes were run beforehand
-        """
-        if os.path.isfile(self._dir_cosm + '/master_dark.fits'):
-            print 'Found a DARK in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
-            self._is_dark = True
-            print '-'*80
-        if os.path.isfile(self._dir_cosm + '/irdis_flat.fits'):
-            print 'Found a FLAT in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
-            self._is_flat = True
-            print '-'*80
-        if os.path.isfile(self._dir_cosm + '/starcenter.fits'):
-            print 'Found a STAR CENTER in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
-            self._is_center = True
-            print '-'*80
-        if (os.path.isfile(self._dir_cosm + '/psf_left.fits') & os.path.isfile(self._dir_cosm + '/psf_right.fits')):
-            print 'Found a STELLAR PSF in \'' + self._dir_cosm + '/\'. Erase it if you want to recalculate it.'
-            self._is_flux = True
-            print '-'*80
-        if ((self.obs_mode == 'IMAGE,DUAL') | (self.obs_mode == 'IMAGE,CLASSICAL')):
-            if os.path.isfile('science_dbi.fits'):
-                print 'Found a science frame in this directory. Erase it if you want to recalculate it.'
-                self._is_science = True
-                print '-'*80
-        elif self.obs_mode == 'POLARIMETRY':
-            if os.path.isfile('science_imaging.fits'):
-                print 'Found a science frame in \'' + self._dir_sci + '/\'. Erase it if you want to recalculate it.'
-                self._is_science = True
-                print '-'*80
-            if os.path.isfile('science_dbi.fits'):
-                print 'Found a science frame in this directory. Erase it if you want to recalculate it.'
-                self._is_science = True
-                print '-'*80
 
     # --------------------------------------------------------------
     # Method to make a summary of what can be done.
@@ -1259,6 +1323,7 @@ class IRDIS(object):
                 final_mode = 'POLARIMETRY'
         # print '-'*80
         return final_mode
+
     # --------------------------------------------------------------        
     # Method to get the MJD of the observations. If there are several, will ask you to pick the one you want
     # --------------------------------------------------------------
@@ -1351,40 +1416,6 @@ class IRDIS(object):
         return final_filter
 
     # --------------------------------------------------------------        
-    # Method to shift individual frame
-    # --------------------------------------------------------------        
-    def _shift_array(self, frame):
-        """
-        Method to find the bright spot and shift it to the center
-        """
-        thrs = 5.
-        sources = daofind(frame, fwhm = 4.0, threshold = thrs * np.std(frame))
-        bright = np.argsort(sources['peak'])[-1:]
-        new_frame = scipy.ndimage.interpolation.shift(frame, [512-sources['ycentroid'][bright[0]],512-sources['xcentroid'][bright[0]]])
-        return new_frame        
-
-    # --------------------------------------------------------------        
-    # Method to do "manual" recentering
-    # --------------------------------------------------------------        
-    def _recenter_dao(self, cube):
-        """
-        Use daofind to locate the source and recenter it (only use for non coronagraphic observations)
-        """
-        if len(np.shape(cube)) == 3:
-            nf = np.shape(cube)[0]
-            for i in range(nf):
-                if i == 0:
-                    frame = self._shift_array(cube[i,])
-                else:
-                    frame += self._shift_array(cube[i,])
-            frame = frame / np.float(nf)
-        else:
-            frame = self._shift_array(cube)
-        return frame
-
-
-
-    # --------------------------------------------------------------        
     # Method to read the science fits files
     # --------------------------------------------------------------        
     def _read_fits(self, filename, peak_left, peak_right):
@@ -1394,20 +1425,14 @@ class IRDIS(object):
         # --------------------------------------------------------------        
         hdu = fits.open(filename + '_right.fits')
         p_r = 0.5 * (hdu[0].header['HIERARCH ESO TEL PARANG END'] + hdu[0].header['HIERARCH ESO TEL PARANG START'])
-        if self._corono:
-            data_right = np.mean(hdu[0].data, axis = 0) / peak_right
-        else:
-            data_right = self._recenter_dao(hdu[0].data)/ peak_right
+        data_right = np.mean(hdu[0].data, axis = 0) / peak_right
         hdu.close()
         # --------------------------------------------------------------        
         # Read the left image
         # --------------------------------------------------------------        
         hdu = fits.open(filename + '_left.fits')
         p_l = 0.5 * (hdu[0].header['HIERARCH ESO TEL PARANG END'] + hdu[0].header['HIERARCH ESO TEL PARANG START'])
-        if self._corono:
-            data_left = np.mean(hdu[0].data, axis = 0) / peak_left
-        else:
-            data_left = self._recenter_dao(hdu[0].data)/ peak_left
+        data_left = np.mean(hdu[0].data, axis = 0) / peak_left
         hdu.close()
         # --------------------------------------------------------------        
         # The total image is the mean of left and right
@@ -1459,10 +1484,10 @@ class IRDIS(object):
             # --------------------------------------------------------------        
             # Save the fits 
             # --------------------------------------------------------------        
-            fits.writeto(self._starname + '_right.fits', cube_right, clobber=True)
-            fits.writeto(self._starname + '_left.fits', cube_left, clobber=True)
-            fits.writeto(self._starname + '_total.fits', cube_total, clobber=True)
-            fits.writeto('para.fits', para, clobber=True)
+            fits.writeto(self._starname + '_right.fits', cube_right, overwrite=True)
+            fits.writeto(self._starname + '_left.fits', cube_left, overwrite=True)
+            fits.writeto(self._starname + '_total.fits', cube_total, overwrite=True)
+            fits.writeto('para.fits', para, overwrite=True)
 
     # --------------------------------------------------------------        
     # Check if the star has some observations in the directory containing the fits files
@@ -1498,7 +1523,6 @@ class IRDIS(object):
         mjd = np.array(data['MJD.OBS'])
         mjd -= 0.5
         self._mjd = mjd.astype(int)
-        self._csv_red = True
         # --------------------------------------------------------------        
         # Check if the star has some observations (at least one fits files with the name of the star.)
         # --------------------------------------------------------------        

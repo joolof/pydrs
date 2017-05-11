@@ -879,10 +879,10 @@ class IFS(object):
         bright = np.argsort(sources['peak'])[-2:]
         if len(sources) != 1:
             print 'found ' + str(len(sources)) + ' sources ...'
-        # if len(sources) == 0.:
-        #     plt.figure()
-        #     plt.imshow(sub, origin = 'lower')
-        #     plt.show()
+        if len(sources) == 0.:
+            plt.figure()
+            plt.imshow(sub, origin = 'lower')
+            plt.show()
         cx = (sources['xcentroid'][bright[0]]) + cx_int - ext
         cy = (sources['ycentroid'][bright[0]]) + cy_int - ext
         return cx, cy
