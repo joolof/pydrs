@@ -766,7 +766,6 @@ class IRDIS(object):
             if not self._misc['astro_field']:
                 f.write(self._dir_cosm + '/starcenter.fits\tIRD_STAR_CENTER\n')
             f.close()
-            sys.exit()
             # --------------------------------------------------------------        
             # Either run the DBI esorex method or the polarimetric one
             # --------------------------------------------------------------        
