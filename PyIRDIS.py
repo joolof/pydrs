@@ -116,7 +116,7 @@ class IRDIS(object):
         # --------------------------------------------------------------
         # Get the parameters for the data reduction from an input file
         # --------------------------------------------------------------
-        self._todo, self._centering = self._param_file()
+        self._todo, self._centering, self._misc = self._param_file()
         # --------------------------------------------------------------
         # Run the recipes that needs to be run
         # --------------------------------------------------------------
@@ -158,13 +158,15 @@ class IRDIS(object):
             f.write('frames:\tall\n')
             f.write('method:\tmedian\n')
             f.write('radon:\tFalse\n')
+            f.write('[MISC]\n')
+            f.write('Astrometric_Field:\tFalse\n')
             f.close()
             self._error_msg('Created a param file \"input.in\" in the local directory.\n Check it to change the default value.')
         # --------------------------------------------------------------
         # If there is a param file, read it and return two dictionaries.
         # --------------------------------------------------------------
         else:
-            todo, centering = {}, {}
+            todo, centering, misc = {}, {}, {}
             parser = ConfigParser.SafeConfigParser()
             parser.read('input.in')
             todo['dark'] = self._str2bool(parser.get('REDUCE', 'dark'))
@@ -207,7 +209,13 @@ class IRDIS(object):
             centering['frames'] = parser.get('CENTERING', 'frames')
             if centering['frames'] != 'all':
                 centering['frames'] = int(centering['frames'])
-            return todo, centering
+            # --------------------------------------------------------------
+            # Read the MISC part
+            # --------------------------------------------------------------
+            if parser.get('MISC', 'Astrometric_Field') == 'True':
+                misc['astro_field'] = True
+
+            return todo, centering, misc
 
 
     # --------------------------------------------------------------
@@ -704,9 +712,9 @@ class IRDIS(object):
         # Do the first search over a large grid
         # --------------------------------------------------------------
         dist = 15.
-        fr_broad = vip.calib.frame_crop(array, 151, cenxy = cenxy, verbose = False)
-        rough = vip.calib.frame_center_radon(fr_broad, cropsize = 141, wavelet=False, mask_center=None, 
-            hsize = dist, step=1., nproc=2, verbose = False, plot = True)
+        fr_broad = vip.preproc.frame_crop(array, 151, cenxy = cenxy, verbose = False)
+        rough = vip.preproc.frame_center_radon(fr_broad, cropsize = 141, mask_center=30, 
+            hsize = dist, step=1., nproc=2, verbose = False, plot = False, debug=False)
         if ((np.abs(rough[0]) >= dist) | (np.abs(rough[1]) >= dist)):
             self._error_msg('Increase the box size for the first centering.')
         cenxy[0] -= np.int(rough[1])
@@ -717,9 +725,9 @@ class IRDIS(object):
         # Do the second search over a smaller grid.
         # --------------------------------------------------------------
         dist = 2.
-        fr_broad = vip.calib.frame_crop(array, 151, cenxy = cenxy, verbose = False)
-        rough = vip.calib.frame_center_radon(fr_broad, cropsize = 141, wavelet=False, mask_center=None, 
-            hsize = dist, step=.1, nproc=2, verbose = False, plot = True)
+        fr_broad = vip.preproc.frame_crop(array, 151, cenxy = cenxy, verbose = False)
+        rough = vip.preproc.frame_center_radon(fr_broad, cropsize = 141, mask_center=30, 
+            hsize = dist, step=.05, nproc=2, verbose = False, plot = False, debug=False)
         if ((np.abs(rough[0]) >= dist) | (np.abs(rough[1]) >= dist)):
             self._error_msg('Increase the box size for the second centering.')
         offset[0] -= rough[1]
@@ -753,7 +761,8 @@ class IRDIS(object):
             f.write(self._dir_cosm + '/master_dark.fits\tIRD_MASTER_DARK\n')
             f.write(self._dir_cosm + '/static_badpixels.fits\tIRD_STATIC_BADPIXELMAP\n')
             f.write(self._dir_cosm + '/irdis_flat.fits\tIRD_FLAT_FIELD\n')
-            f.write(self._dir_cosm + '/starcenter.fits\tIRD_STAR_CENTER\n')
+            if not self._misc['astro_field']:
+                f.write(self._dir_cosm + '/starcenter.fits\tIRD_STAR_CENTER\n')
             f.close()
             # --------------------------------------------------------------        
             # Either run the DBI esorex method or the polarimetric one
@@ -774,7 +783,7 @@ class IRDIS(object):
                 mvfits = subprocess.Popen(args).wait()
             mvfiles = glob.glob('SPHER*.txt')
             for i in range(len(mvfiles)):
-                args = ['rm', mvfiles[i]]
+                args = ['mv', mvfiles[i], self._dir_sci + '/']
                 rmtxt = subprocess.Popen(args).wait()
 
 
