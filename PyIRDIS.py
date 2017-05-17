@@ -214,6 +214,8 @@ class IRDIS(object):
             # --------------------------------------------------------------
             if parser.get('MISC', 'Astrometric_Field') == 'True':
                 misc['astro_field'] = True
+            else:
+                misc['astro_field'] = False
 
             return todo, centering, misc
 
@@ -764,6 +766,7 @@ class IRDIS(object):
             if not self._misc['astro_field']:
                 f.write(self._dir_cosm + '/starcenter.fits\tIRD_STAR_CENTER\n')
             f.close()
+            sys.exit()
             # --------------------------------------------------------------        
             # Either run the DBI esorex method or the polarimetric one
             # --------------------------------------------------------------        
